@@ -6,7 +6,7 @@ license = "MIT"
 repository = "https://github.com/Metirionic/mars-bluetooth-hci"
 description = "Shared FFI infrastructure and logging dispatch for Mars crates"
 keywords = ["ffi", "embedded", "no-std"]
-categories = ["embedded", "ffi"]
+categories = ["embedded"]
 
 [lib]
 name = "mars_common"
