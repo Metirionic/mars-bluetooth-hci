@@ -1,4 +1,3 @@
-#![macro_use]
 #![allow(unused)]
 #![allow(clippy::missing_docs_in_private_items)]
 

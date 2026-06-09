@@ -4,8 +4,8 @@ use safer_ffi::derive_ReprC;
 use serde::{Deserialize, Serialize};
 
 use crate::constants::{
-    extension_slot, frequency_compensation, procedure_abort_reason, reference_power_level, subevent_abort_reason,
-    tone_quality_indicator,
+    extension_slot, frequency_compensation, procedure_abort_reason, reference_power_level,
+    subevent_abort_reason, tone_quality_indicator,
 };
 
 /// Channel-sounding specific HCI LE events.
@@ -86,7 +86,9 @@ impl TryFrom<ReferencePowerLevel> for f32 {
             return Err(ParseError::ReferencePowerLevelNotApplicable);
         }
 
-        if (value.value > reference_power_level::MAX_DBM) || (value.value < reference_power_level::MIN_DBM) {
+        if (value.value > reference_power_level::MAX_DBM)
+            || (value.value < reference_power_level::MIN_DBM)
+        {
             return Err(ParseError::ReservedValue);
         }
 
@@ -182,7 +184,9 @@ impl From<u8> for ProcedureAbortReason {
             procedure_abort_reason::NO_ABORT => Self::NoAbort,
             procedure_abort_reason::LOCAL_HOST_OR_REMOTE_REQUEST => Self::LocalHostOrRemoteRequest,
             procedure_abort_reason::LESS_THAN_15_CHANNELS => Self::LessThan15Channels,
-            procedure_abort_reason::CHANNEL_MAP_UPDATE_INSTANT_PASSED => Self::ChannelMapUpdateInstantPassed,
+            procedure_abort_reason::CHANNEL_MAP_UPDATE_INSTANT_PASSED => {
+                Self::ChannelMapUpdateInstantPassed
+            }
             procedure_abort_reason::UNSPECIFIED => Self::Unspecified,
             _ => Self::Reserved,
         }
