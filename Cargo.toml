@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["mars-hci-common", "bluetooth-hci"]
+members = ["mars-common", "mars-bluetooth-hci"]
 
 [workspace.dependencies]
 postcard = { version = "1", default-features = false }

@@ -1,15 +1,15 @@
 [package]
-name = "mars-hci-common"
+name = "mars-common"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-repository = "https://github.com/Metirionic/mars-hci"
-description = "Shared FFI infrastructure and logging dispatch for Mars HCI crates"
-keywords = ["hci", "bluetooth", "ffi", "embedded", "no-std"]
-categories = ["embedded", "ffi", "hardware-support"]
+repository = "https://github.com/Metirionic/mars-bluetooth-hci"
+description = "Shared FFI infrastructure and logging dispatch for Mars crates"
+keywords = ["ffi", "embedded", "no-std"]
+categories = ["embedded", "ffi"]
 
 [lib]
-name = "mars_hci_common"
+name = "mars_common"
 
 [dependencies]
 cobs = { version = "0.5.1", default-features = false, features = ["alloc"] }

@@ -1,4 +1,4 @@
-# Mars-HCI
+# Mars Bluetooth HCI
 
 Bluetooth HCI event parsing library for [Bluetooth Channel Sounding](https://www.bluetooth.com/blog/bluetooth-channel-sounding/) (BLE CS).
 
@@ -6,12 +6,12 @@ Bluetooth HCI event parsing library for [Bluetooth Channel Sounding](https://www
 
 | Crate | Version | Description |
 |-------|---------|-------------|
-| [`bluetooth-hci`](https://crates.io/crates/bluetooth-hci) | [![crates.io](https://img.shields.io/crates/v/bluetooth-hci.svg)](https://crates.io/crates/bluetooth-hci) | HCI event parsing for BLE CS subevents |
-| [`mars-hci-common`](https://crates.io/crates/mars-hci-common) | [![crates.io](https://img.shields.io/crates/v/mars-hci-common.svg)](https://crates.io/crates/mars-hci-common) | Shared FFI infrastructure and logging dispatch |
+| [`mars-bluetooth-hci`](https://crates.io/crates/mars-bluetooth-hci) | [![crates.io](https://img.shields.io/crates/v/mars-bluetooth-hci.svg)](https://crates.io/crates/mars-bluetooth-hci) | HCI event parsing for BLE CS subevents |
+| [`mars-common`](https://crates.io/crates/mars-common) | [![crates.io](https://img.shields.io/crates/v/mars-common.svg)](https://crates.io/crates/mars-common) | Shared FFI infrastructure and logging dispatch |
 
 ## Overview
 
-`bluetooth-hci` parses HCI event packets containing LE Channel Sounding measurement data from a Bluetooth controller. It supports:
+`mars-bluetooth-hci` parses HCI event packets containing LE Channel Sounding measurement data from a Bluetooth controller. It supports:
 
 - **HCI_LE_CS_Config_Complete** (`0x31`) — CS procedure configuration metadata
 - **HCI_LE_CS_Subevent_Result_Continue** (`0x32`) — Continuation with measurement data
@@ -20,7 +20,7 @@ The parsed data includes Mode2 step data with phase correction terms (I/Q), tone
 
 ## Feature Flags
 
-### `bluetooth-hci`
+### `mars-bluetooth-hci`
 
 | Feature | Default | Description |
 |---------|---------|-------------|
@@ -31,7 +31,7 @@ The parsed data includes Mode2 step data with phase correction terms (I/Q), tone
 | `libc-panic` | No | Bridge Rust panic handler to C callback |
 | `headers` | No | Generate C headers via `safer-ffi` |
 
-### `mars-hci-common`
+### `mars-common`
 
 | Feature | Default | Description |
 |---------|---------|-------------|
@@ -48,16 +48,16 @@ The parsed data includes Mode2 step data with phase correction terms (I/Q), tone
 
 Both crates provide C interoperability via [`safer-ffi`](https://crates.io/crates/safer-ffi):
 
-- `bluetooth-hci` exports `serialize_subevent_result_event` and `serialize_log_message`
-- `mars-hci-common` exports `SerializedData`, `drop_bin`, and `new_dummy_data`
+- `mars-bluetooth-hci` exports `serialize_subevent_result_event` and `serialize_log_message`
+- `mars-common` exports `SerializedData`, `drop_bin`, and `new_dummy_data`
 
-Pre-generated C headers are included at `bluetooth-hci/bluetooth_hci_rs.h`. To regenerate them:
+Pre-generated C headers are included at `mars-bluetooth-hci/mars_bluetooth_hci.h`. To regenerate them:
 
 ```bash
-./bluetooth-hci/generate_headers.sh <output_path>
+./mars-bluetooth-hci/generate_headers.sh <output_path>
 ```
 
-A CMake config is provided at `bluetooth-hci/bluetooth-hci-rust-config.cmake` for embedding into C projects (including cross-compilation for ARM Cortex-M targets).
+A CMake config is provided at `mars-bluetooth-hci/mars-bluetooth-hci-rust-config.cmake` for embedding into C projects (including cross-compilation for ARM Cortex-M targets).
 
 ## `no_std` Support
 
@@ -65,8 +65,8 @@ Both crates support `no_std` environments. Disable default features and enable t
 
 ```toml
 [dependencies]
-bluetooth-hci = { version = "0.7", default-features = false, features = ["libc", "alloc", "libc-alloc", "libc-panic"] }
-mars-hci-common = { version = "0.1", default-features = false, features = ["libc", "libc-alloc", "libc-panic"] }
+mars-bluetooth-hci = { version = "0.7", default-features = false, features = ["libc", "alloc", "libc-alloc", "libc-panic"] }
+mars-common = { version = "0.1", default-features = false, features = ["libc", "libc-alloc", "libc-panic"] }
 ```
 
 Cross-compile for embedded (e.g. `thumbv6m-none-eabi`) with `panic = "abort"` in your Cargo profile.
@@ -74,7 +74,7 @@ Cross-compile for embedded (e.g. `thumbv6m-none-eabi`) with `panic = "abort"` in
 ## Usage
 
 ```rust
-use bluetooth_hci::event::hci_le_cs::subevent_result::SubeventResultEvent;
+use mars_bluetooth_hci::event::hci_le_cs::subevent_result::SubeventResultEvent;
 
 let event = SubeventResultEvent::try_from(hci_bytes)?;
 println!("Connection handle: {}", event.connection_handle);
