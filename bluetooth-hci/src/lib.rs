@@ -15,5 +15,7 @@ pub use event::hci_le_cs::constants;
 /// Generate C headers.
 #[cfg(feature = "headers")]
 pub fn generate_headers(target_path: &String) -> std::io::Result<()> {
-    safer_ffi::headers::builder().to_file(target_path)?.generate()
+    safer_ffi::headers::builder()
+        .to_file(target_path)?
+        .generate()
 }

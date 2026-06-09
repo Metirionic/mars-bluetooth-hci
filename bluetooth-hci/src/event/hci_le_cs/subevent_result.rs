@@ -10,11 +10,14 @@ use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
 pub use crate::event::hci_le_cs::constants::antenna_permutation;
-pub use crate::event::hci_le_cs::constants::cs_params::{MAX_ANTENNA_PATH_COUNT, MAX_NUM_STEPS_REPORTED};
+pub use crate::event::hci_le_cs::constants::cs_params::{
+    MAX_ANTENNA_PATH_COUNT, MAX_NUM_STEPS_REPORTED,
+};
 use crate::event::hci_le_cs::constants::{handle, le_subevent_code, step_mode};
 use crate::event::{
-    ExtensionSlot, FrequencyCompensation, ParseError, ProcedureAbortReason, ProcedureDoneStatus, ProcedureInfo,
-    ReferencePowerLevel, SubeventAbortReason, SubeventDoneStatus, SubeventInfo, ToneQualityIndicator,
+    ExtensionSlot, FrequencyCompensation, ParseError, ProcedureAbortReason, ProcedureDoneStatus,
+    ProcedureInfo, ReferencePowerLevel, SubeventAbortReason, SubeventDoneStatus, SubeventInfo,
+    ToneQualityIndicator,
 };
 
 /// An unsupported field (used as a placeholder).
@@ -79,7 +82,11 @@ impl Mode2 {
     /// Returns the physical antenna index (0-based) assigned to that path.
     /// For out-of-range permutation indices or invalid `n_ap`, returns `path_index`
     /// (identity mapping).
-    pub fn antenna_index(&self, n_ap: usize, path_index: usize) -> Result<usize, crate::constants::Error> {
+    pub fn antenna_index(
+        &self,
+        n_ap: usize,
+        path_index: usize,
+    ) -> Result<usize, crate::constants::Error> {
         Ok(antenna_permutation::lookup(n_ap, self.antenna_permutation_index as usize)?[path_index])
     }
 }
@@ -234,7 +241,8 @@ impl SubeventResultEvent {
                             [antenna_path_byte_offset + 1..antenna_path_byte_offset + 4]
                             .try_into()
                             .unwrap();
-                        mode2.quality_indicators[antenna_path_index] = step_data[antenna_path_byte_offset + 5].into();
+                        mode2.quality_indicators[antenna_path_index] =
+                            step_data[antenna_path_byte_offset + 5].into();
 
                         let step = Step {
                             mode: step_mode,
@@ -251,7 +259,10 @@ impl SubeventResultEvent {
                         antenna_path_byte_offset += 5;
                     }
                     _ => {
-                        return Err(ParseError::InvalidModeType(step_mode, 16 + step_byte_offset));
+                        return Err(ParseError::InvalidModeType(
+                            step_mode,
+                            16 + step_byte_offset,
+                        ));
                     }
                 };
             }
@@ -278,11 +289,12 @@ impl TryFrom<&[u8]> for SubeventResultEvent {
 
         let mut event = match message[0] {
             le_subevent_code::CS_CONFIG_COMPLETE => {
-                let (start_acl_conn_event_counter, has_start_acl_conn_event_counter) = if connection_handle_is_cs_test {
-                    (0, false)
-                } else {
-                    (u16::from_le_bytes(message[4..6].try_into()?), true)
-                };
+                let (start_acl_conn_event_counter, has_start_acl_conn_event_counter) =
+                    if connection_handle_is_cs_test {
+                        (0, false)
+                    } else {
+                        (u16::from_le_bytes(message[4..6].try_into()?), true)
+                    };
 
                 let procedure_counter = u16::from_le_bytes(message[6..8].try_into()?);
                 let frequency_compensation =

@@ -189,7 +189,10 @@ pub mod antenna_permutation {
     /// Returns an array where `result[path_index]` is the physical antenna index
     /// (0-based) assigned to logical path position `path_index`.
     /// Only the first `n_ap` elements are meaningful.
-    pub fn lookup(n_ap: usize, permutation_index: usize) -> Result<[usize; MAX_ANTENNA_PATH_COUNT], Error> {
+    pub fn lookup(
+        n_ap: usize,
+        permutation_index: usize,
+    ) -> Result<[usize; MAX_ANTENNA_PATH_COUNT], Error> {
         match n_ap {
             1 if permutation_index == 0 => Ok(TABLE_1),
             2 if permutation_index < 2 => Ok(TABLE_2[permutation_index]),
