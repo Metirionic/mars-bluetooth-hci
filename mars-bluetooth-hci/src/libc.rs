@@ -46,10 +46,7 @@ pub enum SerializableRef<'d> {
 
 /// Serialize a subevent result event to [`SerializedData`].
 #[ffi_export]
-pub extern "C" fn serialize_subevent_result_event(
-    p_event: &SubeventResultEvent,
-    use_cobs: bool,
-) -> SerializedData {
+pub extern "C" fn serialize_subevent_result_event(p_event: &SubeventResultEvent, use_cobs: bool) -> SerializedData {
     let event = SerializableRef::SubeventResultEvent(p_event);
 
     if use_cobs {
@@ -64,15 +61,8 @@ pub extern "C" fn serialize_subevent_result_event(
 /// # Safety
 /// Dereferences the raw pointer for `p_log_message`. Make sure it is valid.
 #[ffi_export]
-pub unsafe extern "C" fn serialize_log_message(
-    p_log_message: *const c_char,
-    use_cobs: bool,
-) -> SerializedData {
-    let message = SerializableRef::LogMessage(
-        unsafe { CStr::from_ptr(p_log_message) }
-            .to_str()
-            .unwrap_or_default(),
-    );
+pub unsafe extern "C" fn serialize_log_message(p_log_message: *const c_char, use_cobs: bool) -> SerializedData {
+    let message = SerializableRef::LogMessage(unsafe { CStr::from_ptr(p_log_message) }.to_str().unwrap_or_default());
 
     if use_cobs {
         to_allocvec_cobs(&message).unwrap().into()
