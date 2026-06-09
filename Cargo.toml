@@ -1,0 +1,14 @@
+[workspace]
+resolver = "2"
+members = ["mars-hci-common", "bluetooth-hci"]
+
+[workspace.dependencies]
+postcard = { version = "1", default-features = false }
+safer-ffi = { version = "0.2.0-rc1", default-features = false }
+serde = { version = "1", default-features = false, features = ["derive"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+strip = true
+opt-level = 3

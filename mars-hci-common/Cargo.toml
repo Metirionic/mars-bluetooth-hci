@@ -1,0 +1,37 @@
+[package]
+name = "mars-hci-common"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/Metirionic/mars-hci"
+description = "Shared FFI infrastructure and logging dispatch for Mars HCI crates"
+keywords = ["hci", "bluetooth", "ffi", "embedded", "no-std"]
+categories = ["embedded", "ffi", "hardware-support"]
+
+[lib]
+name = "mars_hci_common"
+
+[dependencies]
+cobs = { version = "0.5.1", default-features = false, features = ["alloc"] }
+postcard = { workspace = true }
+chrono = { version = "0.4.44", features = ["serde"], optional = true }
+safer-ffi = { workspace = true }
+serde = { workspace = true }
+toml = { version = "1.1.2", optional = true }
+log = { version = "0.4.26", optional = true }
+defmt = { version = "1.0", optional = true }
+
+[features]
+default = ["std", "libc"]
+
+alloc = ["postcard/alloc"]
+std = ["dep:chrono", "dep:toml", "alloc"]
+
+libc = []
+libc-alloc = ["libc"]
+libc-panic = ["libc"]
+
+log = ["dep:log"]
+defmt = ["dep:defmt"]
+
+headers = ["safer-ffi/headers"]
