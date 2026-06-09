@@ -47,3 +47,15 @@ jobs:
         with:
           components: rustfmt
       - run: cargo fmt --all -- --check
+
+  header-check:
+    name: Generated header
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Regenerate header
+        run: ./bluetooth-hci/generate_headers.sh /tmp/bluetooth_hci_rs.h
+      - name: Diff against committed header
+        run: diff bluetooth-hci/bluetooth_hci_rs.h /tmp/bluetooth_hci_rs.h
