@@ -4,7 +4,7 @@ extern crate alloc;
 use core::ffi::c_char;
 use core::ffi::c_str::CStr;
 
-use mars_hci_common::libc::serialize::SerializedData;
+use mars_common::libc::serialize::SerializedData;
 use postcard::{to_allocvec, to_allocvec_cobs};
 use safer_ffi::ffi_export;
 use serde::Serialize;

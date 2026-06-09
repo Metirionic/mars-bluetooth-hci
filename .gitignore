@@ -3,6 +3,9 @@
 debug
 target
 
+# Header generation build artifacts
+target-headers
+
 # Cargo lock file (library crates should not commit this)
 Cargo.lock
 

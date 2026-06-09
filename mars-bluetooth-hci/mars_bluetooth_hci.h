@@ -7,8 +7,8 @@
  *                                         *
  *******************************************/
 
-#ifndef __RUST_BLUETOOTH_HCI__
-#define __RUST_BLUETOOTH_HCI__
+#ifndef __RUST_MARS_BLUETOOTH_HCI__
+#define __RUST_MARS_BLUETOOTH_HCI__
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -546,4 +546,4 @@ serialize_subevent_result_event (
 } /* extern \"C\" */
 #endif
 
-#endif /* __RUST_BLUETOOTH_HCI__ */
+#endif /* __RUST_MARS_BLUETOOTH_HCI__ */

@@ -1,4 +1,4 @@
-//! Generate headers for the bluetooth-hci library.
+//! Generate headers for the mars-bluetooth-hci library.
 
 fn main() -> std::io::Result<()> {
     #[cfg(feature = "headers")]
@@ -10,7 +10,7 @@ fn main() -> std::io::Result<()> {
             eprintln!("Usage: {} <output_header_path>", args[0]);
             std::process::exit(1);
         }
-        bt_hci_rs::generate_headers(&args[1])?;
+        mars_bluetooth_hci::generate_headers(&args[1])?;
     }
 
     Ok(())

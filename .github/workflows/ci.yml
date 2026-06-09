@@ -56,6 +56,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Regenerate header
-        run: ./bluetooth-hci/generate_headers.sh /tmp/bluetooth_hci_rs.h
+        run: ./mars-bluetooth-hci/generate_headers.sh /tmp/mars_bluetooth_hci.h
       - name: Diff against committed header
-        run: diff bluetooth-hci/bluetooth_hci_rs.h /tmp/bluetooth_hci_rs.h
+        run: diff mars-bluetooth-hci/mars_bluetooth_hci.h /tmp/mars_bluetooth_hci.h
