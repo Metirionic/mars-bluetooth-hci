@@ -80,11 +80,7 @@ pub fn as_mut_ptr<T>(reference: &mut T) -> *mut c_void {
 /// # Safety
 /// Dereferences the raw pointer for `written_length`. Make sure it is valid.
 #[ffi_export]
-pub unsafe extern "C" fn new_dummy_data(
-    length: usize,
-    use_cobs: bool,
-    written_length: *mut usize,
-) -> *const u8 {
+pub unsafe extern "C" fn new_dummy_data(length: usize, use_cobs: bool, written_length: *mut usize) -> *const u8 {
     let mut test_vec: alloc::vec::Vec<u8> = alloc::vec::Vec::with_capacity(length);
     for value in 0..length {
         test_vec.push(value as u8);
