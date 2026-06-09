@@ -5,7 +5,7 @@ edition = "2024"
 license = "MIT"
 repository = "https://github.com/Metirionic/mars-bluetooth-hci"
 description = "Bluetooth HCI event parsing library for Bluetooth Channel Sounding (BLE CS)"
-keywords = ["bluetooth", "no-std", "hci", "channel-sounding", "ble", "embedded"]
+keywords = ["no-std", "hci", "channel-sounding", "ble", "embedded"]
 categories = ["embedded"]
 
 [lib]
