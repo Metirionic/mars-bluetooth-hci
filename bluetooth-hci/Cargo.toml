@@ -1,0 +1,42 @@
+[package]
+name = "bluetooth-hci"
+version = "0.7.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/Metirionic/mars-hci"
+description = "Bluetooth HCI event parsing library for Bluetooth Channel Sounding (BLE CS)"
+keywords = ["bluetooth", "hci", "channel-sounding", "ble", "embedded"]
+categories = ["embedded", "hardware-support", "ffi"]
+
+[lib]
+name = "bt_hci_rs"
+crate-type = ["lib", "staticlib"]
+
+[dependencies]
+mars-hci-common = { path = "../mars-hci-common", version = "0.1.0", default-features = false }
+
+heapless = "0.9.3"
+hex = { version = "0.4", default-features = false }
+postcard = { version = "1", optional = true }
+safer-ffi = { workspace = true }
+serde = { workspace = true }
+serde_with = { version = "3.19.0", default-features = false, features = [
+    "macros",
+] }
+thiserror = { version = "2.0.18", default-features = false }
+
+[dev-dependencies]
+colog = "1.4.0"
+log = "0.4.29"
+
+[features]
+default = ["std", "libc", "alloc"]
+
+std = ["hex/std", "mars-hci-common/std"]
+alloc = ["postcard/alloc"]
+
+libc = ["dep:postcard", "mars-hci-common/libc"]
+libc-alloc = ["libc", "mars-hci-common/libc-alloc"]
+libc-panic = ["libc", "mars-hci-common/libc-panic"]
+
+headers = ["safer-ffi/headers"]
