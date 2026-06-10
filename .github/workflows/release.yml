@@ -3,15 +3,11 @@ name: Release
 on:
   push:
     branches: [main]
-    tags:
-      - "mars-bluetooth-hci@*"
-      - "mars-common@*"
 
 jobs:
   version-bump:
     name: Version bump
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
     permissions:
       contents: write
     steps:
@@ -44,24 +40,3 @@ jobs:
         run: |
           git push
           git push --tags
-
-  github-release:
-    name: GitHub release
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/mars-bluetooth-hci@') || startsWith(github.ref, 'refs/tags/mars-common@')
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Generate changelog
-        id: changelog
-        uses: cocogitto/cocogitto-action@main
-        with:
-          command: changelog
-          args: --at ${{ github.ref_name }}
-      - name: Create GitHub release
-        uses: softprops/action-gh-release@v2
-        with:
-          body: ${{ steps.changelog.outputs.stdout }}
