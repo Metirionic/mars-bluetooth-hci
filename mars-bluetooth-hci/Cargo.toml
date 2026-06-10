@@ -1,6 +1,6 @@
 [package]
 name = "mars-bluetooth-hci"
-version = "0.7.0"
+version = "0.7.1"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/Metirionic/mars-bluetooth-hci"
@@ -13,7 +13,7 @@ name = "mars_bluetooth_hci"
 crate-type = ["lib", "staticlib"]
 
 [dependencies]
-mars-common = { path = "../mars-common", version = "0.1.0", default-features = false }
+mars-common = { path = "../mars-common", version = "0.1.2", default-features = false }
 
 heapless = "0.9.3"
 hex = { version = "0.4", default-features = false }
