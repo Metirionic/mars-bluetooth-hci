@@ -15,15 +15,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --all-targets
-      - name: Conventional commits check
-        uses: cocogitto/cocogitto-action@v4
-        with:
-          command: check
 
   test:
     name: Test

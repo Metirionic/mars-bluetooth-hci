@@ -45,8 +45,8 @@ jobs:
           git push
           git push --tags
 
-  release:
-    name: Release
+  github-release:
+    name: GitHub release
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/mars-bluetooth-hci@') || startsWith(github.ref, 'refs/tags/mars-common@')
     permissions:
@@ -55,24 +55,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Install cocogitto
+      - name: Generate changelog
+        id: changelog
         uses: cocogitto/cocogitto-action@v4
         with:
-          install-only: true
-      - name: Extract package name from tag
-        id: tag
-        run: |
-          TAG="${GITHUB_REF#refs/tags/}"
-          PACKAGE_NAME="${TAG%@*}"
-          PACKAGE_VERSION="${TAG#*@}"
-          echo "package=$PACKAGE_NAME" >> "$GITHUB_OUTPUT"
-          echo "version=$PACKAGE_VERSION" >> "$GITHUB_OUTPUT"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-      - name: Generate changelog
-        run: cog changelog --at "${{ steps.tag.outputs.tag }}" > RELEASE_CHANGELOG.md
+          command: changelog
+          args: --at ${{ github.ref_name }}
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          name: "${{ steps.tag.outputs.package }} ${{ steps.tag.outputs.version }}"
-          body_path: RELEASE_CHANGELOG.md
+          body: ${{ steps.changelog.outputs.stdout }}
