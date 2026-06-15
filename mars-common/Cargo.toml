@@ -11,6 +11,11 @@ categories = ["embedded"]
 [lib]
 name = "mars_common"
 
+[[bin]]
+name = "migrate_binary_data"
+path = "src/bin/migrate_binary_data.rs"
+required-features = ["std"]
+
 [dependencies]
 cobs = { version = "0.5.1", default-features = false, features = ["alloc"] }
 postcard = { version = "1", default-features = false }
@@ -20,12 +25,13 @@ serde = { version = "1", default-features = false, features = ["derive"] }
 toml = { version = "1.1.2", optional = true }
 log = { version = "0.4.26", optional = true }
 defmt = { version = "1.0", optional = true }
+thiserror = { version = "2.0", optional = true }
 
 [features]
 default = ["std", "libc"]
 
 alloc = ["postcard/alloc"]
-std = ["dep:chrono", "dep:toml", "alloc"]
+std = ["dep:chrono", "dep:toml", "dep:thiserror", "alloc"]
 
 libc = []
 libc-alloc = ["libc"]
