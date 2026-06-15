@@ -11,11 +11,6 @@ categories = ["embedded"]
 [lib]
 name = "mars_common"
 
-[[bin]]
-name = "migrate_binary_data"
-path = "src/bin/migrate_binary_data.rs"
-required-features = ["std"]
-
 [dependencies]
 cobs = { version = "0.5.1", default-features = false, features = ["alloc"] }
 postcard = { version = "1", default-features = false }
