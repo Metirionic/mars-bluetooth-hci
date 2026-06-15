@@ -8,16 +8,14 @@ use postcard::{from_bytes, to_allocvec};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-/// Wire format version for BinaryData serialization.
+/// Wire format version for [`BinaryData`] serialization.
 ///
-/// Bump this when the BinaryData struct layout changes in a way that
+/// Bump this when the [`BinaryData`] struct layout changes in a way that
 /// breaks postcard deserialization of previously recorded .bin files.
 /// This includes: adding/removing/reordering fields, changing field types.
-/// Do NOT bump for: new methods, refactors that don't change the struct,
-/// or changes to code that doesn't affect the serialized format.
 pub const BINARY_FORMAT_VERSION: u8 = 1;
 
-/// Errors that can occur when deserializing BinaryData.
+/// Errors that can occur when deserializing [`BinaryData`].
 #[derive(Debug, thiserror::Error)]
 pub enum BinaryDataError {
     /// The recording file uses an incompatible format version.
@@ -36,6 +34,7 @@ pub enum BinaryDataError {
 /// Holds generic serialized data in binary form
 #[derive(Serialize, Deserialize)]
 pub struct BinaryData {
+    /// The format's version.
     version: u8,
     /// Sampling timestamps.
     timestamps: Vec<DateTime<Utc>>,
