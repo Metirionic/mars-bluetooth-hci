@@ -34,5 +34,5 @@ authors = []
 [bump_profiles]
 
 [monorepo.packages]
-"mars-bluetooth-hci" = { path = "mars-bluetooth-hci" }
-"mars-common" = { path = "mars-common" }
+"mars-common" = { path = "mars-common", bump_order = 1 }
+"mars-bluetooth-hci" = { path = "mars-bluetooth-hci", bump_order = 2 }
