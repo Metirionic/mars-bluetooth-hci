@@ -85,21 +85,40 @@ impl Mode2 {
 }
 
 /// Discriminant for [`ModeRoleSpecificInfo`].
-#[allow(missing_docs)]
+///
+/// # Step-mode support limitation
+///
+/// Only [`ModeRoleSpecificInfoKind::Mode2`] is populated by the parser: [`Mode2`]
+/// step data is decoded in [`SubeventResultEvent`]'s parse path. Mode 0 is
+/// recognized but carries no step data (a no-op), and Mode 1 / Mode 3 step inputs
+/// return [`ParseError::InvalidModeType`]. The Mode 1 and Mode 3 variants here
+/// exist for ABI completeness so the C enum stays forward-compatible. Implementing
+/// the remaining modes is tracked in
+/// <https://github.com/Metironic/mars-bluetooth-hci/issues/9>.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[derive_ReprC]
 #[repr(u8)]
 pub enum ModeRoleSpecificInfoKind {
+    /// Mode 0, reflector role. Recognized by the parser but carries no step data.
     Mode0Reflector,
+    /// Mode 1, initiator role. Not populated by the parser.
     Mode1Initiator,
+    /// Mode 1, initiator role, with PBR and RTT measurements. Not populated by the parser.
     Mode1InitiatorPbrRtt,
+    /// Mode 1, reflector role. Not populated by the parser.
     Mode1Reflector,
+    /// Mode 1, reflector role, with PBR and RTT measurements. Not populated by the parser.
     Mode1ReflectorPbrRtt,
+    /// Mode 2. The only step mode populated by the parser (see [`Mode2`]).
     #[default]
     Mode2,
+    /// Mode 3, initiator role. Not populated by the parser.
     Mode3Initiator,
+    /// Mode 3, initiator role, with PBR and RTT measurements. Not populated by the parser.
     Mode3InitiatorPbrRtt,
+    /// Mode 3, reflector role. Not populated by the parser.
     Mode3Reflector,
+    /// Mode 3, reflector role, with PBR and RTT measurements. Not populated by the parser.
     Mode3ReflectorPbrRtt,
 }
 
@@ -164,17 +183,27 @@ pub enum Origin {
 /// or a "LE CS Subevent Result Continue event" [7.7.65.45, p. 2459].
 ///
 /// For the latter, the [`SubeventResultEvent::initial_meta`] is `None`.
+///
+/// See the `TryFrom<&[u8]>` implementation for a parse-from-bytes example.
 #[serde_as]
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[derive_ReprC]
 #[repr(C)]
 pub struct SubeventResultEvent {
     /// The origin of the data (initiator or reflector).
+    ///
+    /// Left at [`Origin::Unknown`] by the parser; the caller sets this from
+    /// out-of-band context (which node produced the bytes), as the file-reader
+    /// helper does.
     pub origin: Origin,
 
     /// MAC address of the local node.
+    ///
+    /// Left at `0` by the parser; the caller sets this from out-of-band context.
     pub local_mac: u64,
     /// MAC address of the peer node.
+    ///
+    /// Left at `0` by the parser; the caller sets this from out-of-band context.
     pub peer_mac: u64,
     /// The connection handle between two nodes.
     pub connection_handle: u16,
@@ -263,6 +292,39 @@ impl SubeventResultEvent {
     }
 }
 
+/// Parse a subevent from its raw HCI bytes.
+///
+/// The parser populates every field decoded from the wire but leaves the
+/// identity fields (`origin`, `local_mac`, `peer_mac`) at their defaults
+/// ([`Origin::Unknown`] / `0`); the caller sets them from out-of-band context,
+/// mirroring the file-reader helper.
+///
+/// # Examples
+///
+/// ```
+/// use mars_bluetooth_hci::event::hci_le_cs::subevent_result::{SubeventResultEvent, Origin};
+/// use mars_bluetooth_hci::constants::le_subevent_code::CS_CONFIG_COMPLETE;
+///
+/// // Minimal HCI_LE_CS_Config_Complete frame: 16-byte header, zero steps reported.
+/// let bytes = [
+///     CS_CONFIG_COMPLETE, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+/// ];
+///
+/// let mut event = SubeventResultEvent::try_from(bytes.as_slice()).unwrap();
+///
+/// // The parser leaves the identity fields at their defaults by design.
+/// assert!(matches!(event.origin, Origin::Unknown));
+/// assert_eq!(event.local_mac, 0);
+/// assert_eq!(event.peer_mac, 0);
+///
+/// // The caller fills them in from out-of-band context.
+/// event.origin = Origin::Initiator;
+/// event.local_mac = 0xAABB_CCDD_EEFF;
+/// event.peer_mac = 0x1122_3344_5566;
+///
+/// assert!(matches!(event.origin, Origin::Initiator));
+/// assert_eq!(event.local_mac, 0xAABB_CCDD_EEFF);
+/// ```
 impl TryFrom<&[u8]> for SubeventResultEvent {
     type Error = ParseError;
 
