@@ -35,9 +35,12 @@ defined in `mars-bluetooth-hci/src/libc.rs:23-45`. It has two variants:
 - `LogMessage` — a firmware log message, borrowing a C string (declaration index 1).
 
 `SerializableRef` (borrowing, serialize-only, used by the FFI) and `Serializable` (owning,
-deserializable, `#[cfg(feature = "std")]`) produce an **identical wire format**, asserted by
-the `log_message_wire_format_matches` test (`libc.rs:78-84`). A decoder deserializes into the
-owning `Serializable` enum and dispatches on the variant.
+deserializable, `#[cfg(feature = "std")]`) produce an **identical wire format**: both wrap
+the same inner value (`&SubeventResultEvent` vs `Box<SubeventResultEvent>`, `&str` vs `&str`),
+which postcard serializes identically regardless of the borrow/own wrapping. The
+`log_message_wire_format_matches` test (`libc.rs:78-84`) asserts this for the `LogMessage`
+variant; the `SubeventResultEvent` variant follows from the same wrapping-irrelevant rule. A
+decoder deserializes into the owning `Serializable` enum and dispatches on the variant.
 
 The frame begins **directly with the variant tag** — there is no outer length prefix, no magic
 byte, and no version field before it.
@@ -207,7 +210,7 @@ concatenated in declaration order (no struct header). The 15 top-level fields, i
 | 10 | `subevent_abort_reason` | `SubeventAbortReason` (enum) | varint tag, declaration order |
 | 11 | `antenna_path_count` | `usize` | varint |
 | 12 | `step_count` | `usize` | varint |
-| 13 | `steps` | `[Step; 160]` | **no length prefix** — 160 `Step`s back-to-back (see [Decoder notes](#array-encoding-asymmetry)) |
+| 13 | `steps` | `[Step; 160]` | **no length prefix** — 160 `Step`s back-to-back (see [Decoder notes](#fixed-size-arrays-carry-no-length-prefix)) |
 | 14 | `initial_meta` | `InitialMeta` (struct) | fields concatenated in declaration order |
 | 15 | `has_initial_meta` | `bool` | 1 byte |
 
@@ -248,29 +251,39 @@ These facts are specific to this repo's types and are **not** documented by `pos
 generated C header. A decoder that misses them will misdecode even with a correct postcard
 implementation.
 
-### Array-encoding asymmetry
+### Fixed-size arrays carry no length prefix
 
-postcard has two array-encoding paths — `serialize_tuple` (no length prefix, no end marker)
-and `serialize_seq` (a varint length prefix) — and which path a given array takes is
-determined by whether the field carries a `serde_with` `[_; N]` Array adapter, which is
-invisible at the postcard level and invisible in the C header. `SubeventResultEvent` contains
-**both** kinds:
+Every array field in this format is a fixed-size `[T; N]`, and **none** carries a length
+prefix on the wire — its `N` elements are emitted back-to-back. This is non-obvious because a
+decoder might expect a length prefix by analogy with a dynamically-sized sequence.
+
+serde serializes a fixed-size array through `serialize_tuple`, and postcard's
+`serialize_tuple` writes **no length prefix and no end marker** (postcard
+`serializer.rs:269-271`). A dynamically-sized sequence such as `Vec<T>` instead takes
+`serialize_seq`, which postcard prefixes with a varint length (postcard
+`serializer.rs:262-266`) — and no array field in `SubeventResultEvent` or `Mode2` is a `Vec`.
+(A varint length prefix also appears on the `LogMessage` variant's `&str` payload, via
+`serialize_str`; that is a string-value encoding, distinct from the tuple-vs-seq collection
+choice that governs arrays.) The two array sites in this format therefore encode identically:
 
 - **`steps: [Step; 160]`** carries `#[serde_as(as = "[_; MAX_NUM_STEPS_REPORTED]")]`
-  (`subevent_result.rs:228`; `MAX_NUM_STEPS_REPORTED = 160`, `constants.rs:54`). The
-  `serde_with` Array adapter routes through `serialize_tuple`, so the 160 `Step`s are emitted
-  **back-to-back with no length prefix and no end marker** (postcard `serializer.rs:269-271`).
+  (`subevent_result.rs:228`; `MAX_NUM_STEPS_REPORTED = 160`,
+  `mars-bluetooth-hci/src/event/hci_le_cs/constants.rs:54`). serde's built-in `[T; N]`
+  `Serialize` impl only covers up to 32 elements, so the 160-element array is serialized
+  through the `serde_with` `[_; N]` Array adapter, which routes through `serialize_tuple`
+  (`serde_with src/ser/impls.rs:343-357`). The 160 `Step`s are emitted back-to-back with no
+  length prefix.
 - **`Mode2`'s three arrays** — `phase_correction_terms: [PhaseCorrectionTerm; 5]`,
   `quality_indicators: [ToneQualityIndicator; 5]`, and `extension_slots: [ExtensionSlot; 5]`
-  (`subevent_result.rs:59-63`; `MAX.ANTENNA_PATH_COUNT + 1 = 5`, `constants.rs:56`) — have
-  **no** `#[serde_as]` (the `Mode2` struct at `subevent_result.rs:52-64` does not declare
-  one). They take serde's default array path through `serialize_seq`, so each is emitted as a
-  **varint `5` length prefix followed by 5 elements** (postcard `serializer.rs:262-266`).
+  (`subevent_result.rs:59-63`; `MAX_ANTENNA_PATH_COUNT + 1 = 5`,
+  `mars-bluetooth-hci/src/event/hci_le_cs/constants.rs:56`) — have **no** `#[serde_as]` (the
+  `Mode2` struct at `subevent_result.rs:52-64` does not declare one). They take serde's
+  built-in `[T; N]` path (5 ≤ 32), which is also `serialize_tuple`, so each is emitted as 5
+  elements back-to-back with no length prefix.
 
-A decoder MUST treat these two array kinds differently. Assuming a uniform encoding
-misdecodes: a spurious "length" byte read before `steps` would be interpreted as the first
-`Step.mode` and desynchronize all 160 steps; conversely, omitting the length prefix on a
-`Mode2` array would misalign every element that follows.
+A decoder MUST NOT read a length byte before any of these arrays. Doing so consumes the first
+element as a spurious "length" and desynchronizes every field that follows — all 160 steps
+for `steps`, or every subsequent `Mode2` field for the `[T; 5]` arrays.
 
 ### Enum tags are declaration order, not C-repr discriminants
 
@@ -297,7 +310,7 @@ for `Aborted`/`Reserved`. The same declaration-order rule applies to `Origin`,
 
 A particularly subtle case: `ModeRoleSpecificInfoKind::Mode2` is declaration index **5**, so
 its wire value is `0x05` (`subevent_result.rs:97-119`). This is **distinct from** the HCI
-constant `step_mode::MODE_2 = 0x02` (`constants.rs:46`), which is the raw value that fills the
+constant `step_mode::MODE_2 = 0x02` (`mars-bluetooth-hci/src/event/hci_le_cs/constants.rs:46`), which is the raw value that fills the
 `Step.mode: u8` field. Both values appear in the same `Step` struct — `mode` = `0x02` (a raw
 `u8`) followed by `info.kind` = `0x05` (the enum tag) — and must not be conflated. (The
 `ModeRoleSpecificInfoKind` enum enumerates every mode/role variant for C-ABI forward
