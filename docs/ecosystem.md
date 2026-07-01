@@ -1,6 +1,6 @@
 # Ecosystem overview
 
-This document orients you to the three Metirionic Channel Sounding repositories and how data flows between them. It stays at the ecosystem level — it does not document Bluetooth Channel Sounding technology itself (see the [Bluetooth SIG Channel Sounding overview](https://www.bluetooth.com/channel-sounding-tech-overview/)), the internal function-level architecture of this library (see [docs/architecture.md](architecture.md), forthcoming), or the firmware's internals (see the sibling firmware's [docs/architecture.md](https://github.com/Metirionic/mars-cs-nrf54l/blob/main/docs/architecture.md)).
+This document orients you to the three Metirionic Channel Sounding repositories and how data flows between them. It stays at the ecosystem level — it does not document Bluetooth Channel Sounding technology itself (see the [Bluetooth SIG Channel Sounding overview](https://www.bluetooth.com/channel-sounding-tech-overview/)), the internal function-level architecture of this library (see [docs/architecture.md](architecture.md)), or the firmware's internals (see the sibling firmware's [docs/architecture.md](https://github.com/Metirionic/mars-cs-nrf54l/blob/main/docs/architecture.md)).
 
 ## The three repositories
 
@@ -55,10 +55,10 @@ flowchart LR
 4. **Transport:** the firmware transmits the COBS-framed binary over UART.
 5. **Decode:** the evaluation app receives the stream, splits frames on the `0x00` delimiter, postcard-deserializes each frame, and visualizes the data.
 
-The full wire-format specification (envelope, postcard encoding, COBS framing, the trailing-zero delimiter, the `use_cobs=false` variant) and the internal HCI-to-UART sequence are documented separately — see the wire-format specification (forthcoming) and [docs/architecture.md](architecture.md) (forthcoming, tracked in [issue #10](https://github.com/Metirionic/mars-bluetooth-hci/issues/10)).
+The full wire-format specification (envelope, postcard encoding, COBS framing, the trailing-zero delimiter, the `use_cobs=false` variant) and the internal HCI-to-UART sequence are documented separately — see the wire-format specification (forthcoming) and [docs/architecture.md](architecture.md).
 
 ## Related documents
 
-- [docs/architecture.md](architecture.md) — this library's internal architecture: encode/decode sides, the serialize-only FFI surface, the two event-struct construction paths, and the end-to-end HCI→UART sequence diagram. Forthcoming, tracked in [issue #10](https://github.com/Metirionic/mars-bluetooth-hci/issues/10).
+- [docs/architecture.md](architecture.md) — this library's internal architecture: encode/decode sides, the serialize-only FFI surface, the two event-struct construction paths, and the end-to-end HCI→UART sequence diagram.
 - [mars-cs-nrf54l docs/architecture.md](https://github.com/Metirionic/mars-cs-nrf54l/blob/main/docs/architecture.md) — the firmware's internal ranging-data flow; defers the COBS wire format and the `mars-bluetooth-hci` API to this repo.
 - [Bluetooth SIG Channel Sounding overview](https://www.bluetooth.com/channel-sounding-tech-overview/) — the technology background this document deliberately does not reproduce.
