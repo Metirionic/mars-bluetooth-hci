@@ -71,9 +71,9 @@ The encode path from an in-memory event struct to bytes (`mars-bluetooth-hci/src
 4. The `Vec<u8>` is converted into `SerializedData` via `.into()`, which `mem::forget`s the vec and hands the raw pointer/length/capacity to C.
 5. The caller frees the buffer via `drop_bin`.
 
-The envelope on the wire is the `SerializableRef`/`Serializable` enum (`SubeventResultEvent` or `LogMessage` variant) — the receiver deserializes the enum and dispatches accordingly. There is **no in-band version or magic byte** in the envelope today; versioning is currently by git-tag co-pinning of the library with paired firmware/evaluation-app releases. Whether to add an in-band version/magic byte is an open decision (#15, blocked by the wire-format spec #12).
+The envelope on the wire is the `SerializableRef`/`Serializable` enum (`SubeventResultEvent` or `LogMessage` variant) — the receiver deserializes the enum and dispatches accordingly. There is **no in-band version or magic byte** in the envelope today; versioning is currently by git-tag co-pinning of the library with paired firmware/evaluation-app releases. Whether to add an in-band version/magic byte is an open decision (#15; see [wire-format.md](wire-format.md) §Versioning and compatibility).
 
-For the byte-level wire-format detail (envelope layout, COBS framing, the trailing-zero delimiter, the `use_cobs=false` variant), see [ADR-0001](adr/0001-wire-format-postcard-cobs.md) and the forthcoming wire-format specification (#12).
+For the byte-level wire-format detail (envelope layout, COBS framing, the trailing-zero delimiter, the `use_cobs=false` variant), see [ADR-0001](adr/0001-wire-format-postcard-cobs.md) for the decision and [wire-format.md](wire-format.md) for the authoritative contract.
 
 ## End-to-end sequence
 

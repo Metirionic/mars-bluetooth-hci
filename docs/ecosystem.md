@@ -55,7 +55,7 @@ flowchart LR
 4. **Transport:** the firmware transmits the COBS-framed binary over UART.
 5. **Decode:** the evaluation app receives the stream, splits frames on the `0x00` delimiter, postcard-deserializes each frame, and visualizes the data.
 
-The full wire-format specification (envelope, postcard encoding, COBS framing, the trailing-zero delimiter, the `use_cobs=false` variant) and the internal HCI-to-UART sequence are documented separately — see the wire-format specification (forthcoming) and [docs/architecture.md](architecture.md).
+The full wire-format specification (envelope, postcard encoding, COBS framing, the trailing-zero delimiter, the `use_cobs=false` variant) and the internal HCI-to-UART sequence are documented separately — see [wire-format.md](wire-format.md) and [docs/architecture.md](architecture.md).
 
 ## Related documents
 
