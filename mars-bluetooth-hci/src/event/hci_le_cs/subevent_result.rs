@@ -17,10 +17,6 @@ use crate::event::{
     ReferencePowerLevel, SubeventAbortReason, SubeventDoneStatus, SubeventInfo, ToneQualityIndicator,
 };
 
-/// An unsupported field (used as a placeholder).
-#[derive(Debug)]
-pub struct Unsupported {}
-
 /// The phase correction term (PCT), composed of I and Q components.
 #[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
 #[derive_ReprC]
