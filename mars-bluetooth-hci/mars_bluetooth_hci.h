@@ -209,31 +209,61 @@ SubeventAbortReason_t;
 
 /** \brief
  *  Discriminant for [`ModeRoleSpecificInfo`].
+ *
+ *  # Step-mode support limitation
+ *
+ *  Only [`ModeRoleSpecificInfoKind::Mode2`] is populated by the parser: [`Mode2`]
+ *  step data is decoded in [`SubeventResultEvent`]'s parse path. Mode 0 is
+ *  recognized but carries no step data (a no-op), and Mode 1 / Mode 3 step inputs
+ *  return [`ParseError::InvalidModeType`]. The Mode 1 and Mode 3 variants here
+ *  exist for ABI completeness so the C enum stays forward-compatible. Implementing
+ *  the remaining modes is tracked in
+ *  <https://github.com/Metironic/mars-bluetooth-hci/issues/9>.
  */
 /** \remark Has the same ABI as `uint8_t` **/
 #ifdef DOXYGEN
 typedef
 #endif
 enum ModeRoleSpecificInfoKind {
-    /** <No documentation available> */
+    /** \brief
+     *  Mode 0, reflector role. Recognized by the parser but carries no step data.
+     */
     MODE_ROLE_SPECIFIC_INFO_KIND_MODE0_REFLECTOR,
-    /** <No documentation available> */
+    /** \brief
+     *  Mode 1, initiator role. Not populated by the parser.
+     */
     MODE_ROLE_SPECIFIC_INFO_KIND_MODE1_INITIATOR,
-    /** <No documentation available> */
+    /** \brief
+     *  Mode 1, initiator role, with PBR and RTT measurements. Not populated by the parser.
+     */
     MODE_ROLE_SPECIFIC_INFO_KIND_MODE1_INITIATOR_PBR_RTT,
-    /** <No documentation available> */
+    /** \brief
+     *  Mode 1, reflector role. Not populated by the parser.
+     */
     MODE_ROLE_SPECIFIC_INFO_KIND_MODE1_REFLECTOR,
-    /** <No documentation available> */
+    /** \brief
+     *  Mode 1, reflector role, with PBR and RTT measurements. Not populated by the parser.
+     */
     MODE_ROLE_SPECIFIC_INFO_KIND_MODE1_REFLECTOR_PBR_RTT,
-    /** <No documentation available> */
+    /** \brief
+     *  Mode 2. The only step mode populated by the parser (see [`Mode2`]).
+     */
     MODE_ROLE_SPECIFIC_INFO_KIND_MODE2,
-    /** <No documentation available> */
+    /** \brief
+     *  Mode 3, initiator role. Not populated by the parser.
+     */
     MODE_ROLE_SPECIFIC_INFO_KIND_MODE3_INITIATOR,
-    /** <No documentation available> */
+    /** \brief
+     *  Mode 3, initiator role, with PBR and RTT measurements. Not populated by the parser.
+     */
     MODE_ROLE_SPECIFIC_INFO_KIND_MODE3_INITIATOR_PBR_RTT,
-    /** <No documentation available> */
+    /** \brief
+     *  Mode 3, reflector role. Not populated by the parser.
+     */
     MODE_ROLE_SPECIFIC_INFO_KIND_MODE3_REFLECTOR,
-    /** <No documentation available> */
+    /** \brief
+     *  Mode 3, reflector role, with PBR and RTT measurements. Not populated by the parser.
+     */
     MODE_ROLE_SPECIFIC_INFO_KIND_MODE3_REFLECTOR_PBR_RTT,
 }
 #ifndef DOXYGEN
@@ -455,20 +485,30 @@ typedef struct InitialMeta {
  *  or a "LE CS Subevent Result Continue event" [7.7.65.45, p. 2459].
  *
  *  For the latter, the [`SubeventResultEvent::initial_meta`] is `None`.
+ *
+ *  See the `TryFrom<&[u8]>` implementation for a parse-from-bytes example.
  */
 typedef struct SubeventResultEvent {
     /** \brief
      *  The origin of the data (initiator or reflector).
+     *
+     *  Left at [`Origin::Unknown`] by the parser; the caller sets this from
+     *  out-of-band context (which node produced the bytes), as the file-reader
+     *  helper does.
      */
     Origin_t origin;
 
     /** \brief
      *  MAC address of the local node.
+     *
+     *  Left at `0` by the parser; the caller sets this from out-of-band context.
      */
     uint64_t local_mac;
 
     /** \brief
      *  MAC address of the peer node.
+     *
+     *  Left at `0` by the parser; the caller sets this from out-of-band context.
      */
     uint64_t peer_mac;
 
