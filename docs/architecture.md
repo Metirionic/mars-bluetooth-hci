@@ -17,10 +17,10 @@ The C FFI surface (generated via `safer-ffi` `#[ffi_export]` into `mars_bluetoot
 
 | Symbol | Role | Source |
 |---|---|---|
-| `serialize_subevent_result_event` | Serialize a `&SubeventResultEvent` into a `SerializedData` buffer, optionally COBS-encoded. | `mars-bluetooth-hci/src/libc.rs:48` |
-| `serialize_log_message` | Serialize a C-string log message into a `SerializedData` buffer, optionally COBS-encoded. | `mars-bluetooth-hci/src/libc.rs:63` |
-| `drop_bin` | Free a `SerializedData` buffer that Rust allocated. | `mars-common/src/libc/serialize.rs:104` |
-| `new_dummy_data` | Allocate deterministic bring-up bytes (optionally COBS-encoded) — a test/bring-up helper, not part of the HCI→UART path. | `mars-common/src/libc/serialize.rs:82` |
+| `serialize_subevent_result_event` | Serialize a `&SubeventResultEvent` into a `SerializedData` buffer, optionally COBS-encoded. | `mars-bluetooth-hci/src/libc.rs:49` |
+| `serialize_log_message` | Serialize a C-string log message into a `SerializedData` buffer, optionally COBS-encoded. | `mars-bluetooth-hci/src/libc.rs:64` |
+| `drop_bin` | Free a `SerializedData` buffer that Rust allocated. | `mars-common/src/libc/serialize.rs:105` |
+| `new_dummy_data` | Allocate deterministic bring-up bytes (optionally COBS-encoded) — a test/bring-up helper, not part of the HCI→UART path. | `mars-common/src/libc/serialize.rs:83` |
 
 There is **no** `parse_*`/`decode_*`/`deserialize_*` symbol. The HCI parser — `impl TryFrom<&[u8]> for SubeventResultEvent` (`mars-bluetooth-hci/src/event/hci_le_cs/subevent_result.rs`) together with `ParseError` — is a Rust-API-only concern, deliberately kept off the C surface so the parser's memory safety and error handling stay in Rust (ADR-0002).
 
@@ -36,7 +36,7 @@ This is the production path used by `mars-cs-nrf54l`. The firmware collects Chan
 
 ### Path B — Rust parse-from-bytes (Rust API only)
 
-This is the decode-side path, available only to Rust consumers. `impl TryFrom<&[u8]> for SubeventResultEvent` (`subevent_result.rs:324`) parses raw HCI subevent bytes: it handles subevent codes `0x31` (`CS_CONFIG_COMPLETE`) and `0x32` (`CS_SUBEVENT_RESULT_CONTINUE`), decodes the header fields, and `push_steps` (`subevent_result.rs:239-288`) walks the per-step byte layout. It is consumed by the file-reader helper `read_file` (`mars-bluetooth-hci/src/event/hci_le_cs/hci_file_reader.rs:82`) and by tests/doctests.
+This is the decode-side path, available only to Rust consumers. `impl TryFrom<&[u8]> for SubeventResultEvent` (`subevent_result.rs:324`) parses raw HCI subevent bytes: it handles subevent codes `0x31` (`CS_CONFIG_COMPLETE`) and `0x32` (`CS_SUBEVENT_RESULT_CONTINUE`), decodes the header fields, and `push_steps` (`subevent_result.rs:239-288`) walks the per-step byte layout. It is consumed by the file-reader helper `read_file` (`mars-bluetooth-hci/src/event/hci_le_cs/hci_file_reader.rs:43`) and by tests/doctests.
 
 A precision note on availability: the parser itself is **Rust-API-only and no_std-compatible** — the `impl TryFrom<&[u8]>` is not cfg-gated and compiles without `std` (it uses `core::array::from_fn`, core `try_into`, and `Result`). What is `#[cfg(any(feature = "std", test))]`-gated is its *convenience caller*, the `hci_file_reader` module, which reads a vendor text format from disk. The parser is not exported across the FFI in any configuration.
 
@@ -115,7 +115,7 @@ sequenceDiagram
 
 ## Known limitations
 
-- **Identity fields are caller-set by design.** The parser (`impl TryFrom<&[u8]> for SubeventResultEvent`, `subevent_result.rs:324`) populates every field it can decode from the HCI bytes but leaves `origin`, `local_mac`, and `peer_mac` at their defaults (`Origin::Unknown` / `0`) — the raw subevent bytes do not carry node identity. The caller fills them from out-of-band context. In Path B the file-reader helper `read_file` (`hci_file_reader.rs:82`) sets `origin` from the vendor text format's `requester`/`reflector` label after parsing; in Path A the firmware sets all three directly in C before calling `serialize_subevent_result_event`. This is intentional, not a parser bug.
+- **Identity fields are caller-set by design.** The parser (`impl TryFrom<&[u8]> for SubeventResultEvent`, `subevent_result.rs:324`) populates every field it can decode from the HCI bytes but leaves `origin`, `local_mac`, and `peer_mac` at their defaults (`Origin::Unknown` / `0`) — the raw subevent bytes do not carry node identity. The caller fills them from out-of-band context. In Path B the file-reader helper `read_file` (`hci_file_reader.rs:43`) sets `origin` from the vendor text format's `requester`/`reflector` label after parsing; in Path A the firmware sets all three directly in C before calling `serialize_subevent_result_event`. This is intentional, not a parser bug.
 - **Only Mode 2 step data is decoded.** `push_steps` (`subevent_result.rs:239-288`) fully decodes `MODE_2` step data, recognizes `MODE_0` but carries no step data from it (a no-op), and returns `ParseError::InvalidModeType` for `MODE_1` and `MODE_3`. The `ModeRoleSpecificInfoKind` `#[repr(u8)]` enum nonetheless enumerates every mode/role variant so the C enum in the generated header stays forward-compatible — those variants exist for ABI completeness, not because the parser populates them. Implementing the remaining modes is tracked in #9.
 
 ## Related documents
