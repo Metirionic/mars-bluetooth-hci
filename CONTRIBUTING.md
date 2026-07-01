@@ -210,8 +210,8 @@ This repo uses a hybrid documentation layout (see PRD #3 and
   agent-facing context — tracked in #13), this `CONTRIBUTING.md`, and [`LICENSE`](LICENSE).
 - **[`docs/`](docs) tree** for technical, human-facing documents: currently
   [`docs/ecosystem.md`](docs/ecosystem.md), [`docs/architecture.md`](docs/architecture.md),
-  and [`docs/agents/`](docs/agents); forthcoming are the wire-format specification (#12)
-  and the C/embedded integration guide (#14).
+  [`docs/wire-format.md`](docs/wire-format.md), and [`docs/agents/`](docs/agents); forthcoming is
+  the C/embedded integration guide (#14).
 - **[`docs/adr/`](docs/adr)** for Architecture Decision Records, seeded by #6
   (ADR-0001 wire format, ADR-0002 serialize-only FFI). New ADRs are named
   `docs/adr/NNNN-kebab-title.md`.
