@@ -296,8 +296,8 @@ impl SubeventResultEvent {
 ///
 /// The parser populates every field decoded from the wire but leaves the
 /// identity fields (`origin`, `local_mac`, `peer_mac`) at their defaults
-/// ([`Origin::Unknown`] / `0`); the caller sets them from out-of-band context,
-/// mirroring the file-reader helper.
+/// ([`Origin::Unknown`] / `0`); the caller sets them from out-of-band context
+/// — `origin` in the same way the file-reader helper does.
 ///
 /// # Examples
 ///
