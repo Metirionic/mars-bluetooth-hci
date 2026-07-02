@@ -223,7 +223,7 @@ this is the FFI-only slice an integrator writes.)
 
 ### SerializedData ownership
 
-`SerializedData` is `#[repr(C)]` (`mars-common/src/libc/serialize.rs:13`):
+`SerializedData` is `#[repr(C)]` (`mars-common/src/libc/serialize.rs:14`):
 
 ```c
 typedef struct SerializedData {
