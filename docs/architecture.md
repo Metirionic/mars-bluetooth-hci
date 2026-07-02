@@ -1,6 +1,6 @@
 # Architecture overview
 
-This document is the detailed, human-facing architecture of `mars-bluetooth-hci` — the HOW underneath [ecosystem.md](ecosystem.md) (the WHAT) and the two ADRs (the WHY): [ADR-0001](adr/0001-wire-format-postcard-cobs.md) (wire format) and [ADR-0002](adr/0002-serialize-only-ffi.md) (serialize-only FFI). It is the detailed counterpart to the future concise `CONTEXT.md` (#13), which will link here rather than duplicate this content. It is written for the PRD #3 audience, in priority order: prospective MARS licensees, C/embedded integrators, Rust crate users, and contributors.
+This document is the detailed, human-facing architecture of `mars-bluetooth-hci` — the HOW underneath [ecosystem.md](ecosystem.md) (the WHAT) and the two ADRs (the WHY): [ADR-0001](adr/0001-wire-format-postcard-cobs.md) (wire format) and [ADR-0002](adr/0002-serialize-only-ffi.md) (serialize-only FFI). It is the detailed counterpart to the concise [`CONTEXT.md`](../CONTEXT.md), which links here rather than duplicating this content. It is written for the PRD #3 audience, in priority order: prospective MARS licensees, C/embedded integrators, Rust crate users, and contributors.
 
 ## System context
 
