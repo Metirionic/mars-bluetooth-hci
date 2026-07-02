@@ -206,8 +206,8 @@ literals, so it needs no syncing.
 This repo uses a hybrid documentation layout (see PRD #3 and
 [`docs/agents/domain.md`](docs/agents/domain.md)):
 
-- **Root meta files:** [`README.md`](README.md) (front door), `CONTEXT.md` (concise
-  agent-facing context — tracked in #13), this `CONTRIBUTING.md`, and [`LICENSE`](LICENSE).
+- **Root meta files:** [`README.md`](README.md) (front door), [`CONTEXT.md`](CONTEXT.md) (concise
+  agent-facing context — #13), this `CONTRIBUTING.md`, and [`LICENSE`](LICENSE).
 - **[`docs/`](docs) tree** for technical, human-facing documents: currently
   [`docs/ecosystem.md`](docs/ecosystem.md), [`docs/architecture.md`](docs/architecture.md),
   [`docs/wire-format.md`](docs/wire-format.md), and [`docs/agents/`](docs/agents); forthcoming is
@@ -220,5 +220,5 @@ This repo uses a hybrid documentation layout (see PRD #3 and
 `docs/adr/`; concise agent context → `CONTEXT.md`. Use **Mermaid** for diagrams (GitHub
 renders it natively, matching the sibling `mars-cs-nrf54l` repo). **Cross-link rather
 than duplicate** — for example, point at the sibling firmware repo's architecture doc
-instead of restating it. Use the glossary vocabulary from `CONTEXT.md` once it exists; if
+instead of restating it. Use the glossary vocabulary from [`CONTEXT.md`](CONTEXT.md); if
 a concept is missing, note the gap rather than inventing a new term.
