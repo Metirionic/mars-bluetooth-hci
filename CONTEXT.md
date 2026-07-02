@@ -47,3 +47,11 @@ _Avoid_: serializer, encode side, encoder library
 **Decoder**:
 The closed-source deserialize side of the MARS data path — the `mars-ranging-demo` GUI — which consumes the wire format this repository defines (see [docs/ecosystem.md](docs/ecosystem.md), [docs/wire-format.md](docs/wire-format.md)).
 _Avoid_: deserializer, decode side, eval app, GUI
+
+## Glossary gaps
+
+The C/embedded integration guide uses a few integration-mechanics terms that are
+not domain vocabulary and so are not defined above: **FFI**, **COBS**, `no_std`,
+**staticlib**, and **CMake / `FetchContent`**. They are introduced in-context in
+[docs/c-embedded-integration.md](docs/c-embedded-integration.md), which is the
+authoritative integrator walkthrough.
