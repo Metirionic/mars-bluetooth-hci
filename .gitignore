@@ -6,6 +6,10 @@ target
 # Header generation build artifacts
 target-headers
 
+# Python bytecode caches (check_readme_versions.py and any local runs)
+__pycache__/
+*.pyc
+
 # Cargo lock file (library crates should not commit this)
 Cargo.lock
 

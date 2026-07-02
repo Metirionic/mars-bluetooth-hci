@@ -188,15 +188,19 @@ track the published crate version:
 - [`mars-common/README.md`](mars-common/README.md) —
   `mars-common = { version = "…", … }`
 
-There is **no automation** for this: the `cog` `cargo set-version` hook only updates
-`Cargo.toml`, not the READMEs. Keeping the snippets in sync is a **manual pre-release
-step** — after a version bump, update the version literal in both sub-READMEs to match
-the new `Cargo.toml` version.
+The `cog` `cargo set-version` hook only updates `Cargo.toml`, not the READMEs, so
+updating the version literal in both sub-READMEs is still a **manual pre-release step**
+— after a version bump, update the version literal in both sub-READMEs to match the new
+`Cargo.toml` version. A CI gate now catches drift: the `version-check` job in
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml), backed by
+[`.github/scripts/check_readme_versions.py`](.github/scripts/check_readme_versions.py),
+fails the build if a sub-README's `<crate> = { version = "…", … }` snippet diverges from
+the crate's `Cargo.toml` `version` (both compared on `MAJOR.MINOR`, since the snippets
+intentionally use a minor-only SemVer requirement). Run it locally before pushing:
 
-> **Note:** these snippets are currently stale (`0.7` vs published `0.8.0` for
-> `mars-bluetooth-hci`, `0.1` vs `0.2.0` for `mars-common`). The fix is tracked in #11 and
-> a CI gate to prevent recurrence is tracked in #16. Do not silently fix them as part of
-> unrelated work — link those issues instead.
+```bash
+python3 .github/scripts/check_readme_versions.py
+```
 
 The root [`README.md`](README.md) uses crates.io shields badges rather than version
 literals, so it needs no syncing.

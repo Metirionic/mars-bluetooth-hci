@@ -72,7 +72,7 @@ Disable default features and enable the required `libc*` features for your targe
 
 ```toml
 [dependencies]
-mars-bluetooth-hci = { version = "0.7", default-features = false, features = ["libc", "alloc", "libc-alloc", "libc-panic"] }
+mars-bluetooth-hci = { version = "0.8", default-features = false, features = ["libc", "alloc", "libc-alloc", "libc-panic"] }
 ```
 
 Cross-compile for embedded (e.g. `thumbv6m-none-eabi`) with `panic = "abort"` in your Cargo profile.
