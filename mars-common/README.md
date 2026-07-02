@@ -52,7 +52,7 @@ Disable default features and enable the required `libc*` features for your targe
 
 ```toml
 [dependencies]
-mars-common = { version = "0.1", default-features = false, features = ["libc", "libc-alloc", "libc-panic"] }
+mars-common = { version = "0.2", default-features = false, features = ["libc", "libc-alloc", "libc-panic"] }
 ```
 
 ## License
