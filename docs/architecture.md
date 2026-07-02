@@ -124,5 +124,6 @@ sequenceDiagram
 - [adr/0001-wire-format-postcard-cobs.md](adr/0001-wire-format-postcard-cobs.md) — the wire-format decision (postcard + COBS, the `0x00` sentinel, the `use_cobs=false` unframed variant, encode-only/decode-closed boundary).
 - [adr/0002-serialize-only-ffi.md](adr/0002-serialize-only-ffi.md) — the serialize-only FFI decision and the two event-struct construction paths (Path A / Path B) at the decision level.
 - [../CONTRIBUTING.md](../CONTRIBUTING.md) §1 — the generated-header regeneration contract; §3 — the `no_std`/embedded feature matrix; §6 — the documentation structure and Mermaid convention.
+- [c-embedded-integration.md](c-embedded-integration.md) — the detailed integrator walkthrough for building/linking the static library and the FFI call pattern; this document is the high-level FFI/Path-A counterpart.
 - [mars-cs-nrf54l docs/architecture.md](https://github.com/Metirionic/mars-cs-nrf54l/blob/main/docs/architecture.md) — the firmware's internal ranging-data flow; defers the COBS wire format and the `mars-bluetooth-hci` API to this repo.
 - [Bluetooth SIG Channel Sounding overview](https://www.bluetooth.com/channel-sounding-tech-overview/) — the technology background this document deliberately does not reproduce.

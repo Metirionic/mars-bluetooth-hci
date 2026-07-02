@@ -336,6 +336,7 @@ version mechanism exists.
 
 - [ecosystem.md](ecosystem.md) — the three-repo WHAT and the ecosystem data-flow diagram.
 - [architecture.md](architecture.md) — the HOW: encode/decode sides, the serialize-only FFI surface, the two event-struct construction paths, and the end-to-end HCI→UART sequence diagram (this document is the byte-level CONTRACT underneath it).
+- [c-embedded-integration.md](c-embedded-integration.md) — the integrator HOW-TO that produces the bytes specified by this contract.
 - [adr/0001-wire-format-postcard-cobs.md](adr/0001-wire-format-postcard-cobs.md) — the WHY: the postcard + COBS decision, the `0x00` sentinel, the `use_cobs=false` unframed variant, and the encode-only / decode-closed boundary.
 - [adr/0002-serialize-only-ffi.md](adr/0002-serialize-only-ffi.md) — the serialize-only C FFI decision.
 - [../CONTRIBUTING.md](../CONTRIBUTING.md) §6 — the documentation structure and Mermaid convention.

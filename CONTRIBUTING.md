@@ -140,7 +140,7 @@ The CMake config builds the `staticlib` (`libmars_bluetooth_hci.a`) with exactly
 `--no-default-features --features libc,alloc,libc-panic,libc-alloc` set when `HOST` is
 off, and exposes an imported CMake target `mars_bt_hci_rust`. For the full integrator
 walkthrough (building/linking the static library, the FFI call pattern, a C example), see
-the C/embedded integration guide tracked in #14.
+the [C/embedded integration guide](docs/c-embedded-integration.md) (#14).
 
 ## 4. Releases (`cog` / Conventional Commits)
 
@@ -210,8 +210,8 @@ This repo uses a hybrid documentation layout (see PRD #3 and
   agent-facing context — #13), this `CONTRIBUTING.md`, and [`LICENSE`](LICENSE).
 - **[`docs/`](docs) tree** for technical, human-facing documents: currently
   [`docs/ecosystem.md`](docs/ecosystem.md), [`docs/architecture.md`](docs/architecture.md),
-  [`docs/wire-format.md`](docs/wire-format.md), and [`docs/agents/`](docs/agents); forthcoming is
-  the C/embedded integration guide (#14).
+  [`docs/wire-format.md`](docs/wire-format.md), [`docs/c-embedded-integration.md`](docs/c-embedded-integration.md)
+  (the C/embedded integration guide, #14), and [`docs/agents/`](docs/agents).
 - **[`docs/adr/`](docs/adr)** for Architecture Decision Records, seeded by #6
   (ADR-0001 wire format, ADR-0002 serialize-only FFI). New ADRs are named
   `docs/adr/NNNN-kebab-title.md`.

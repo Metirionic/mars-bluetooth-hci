@@ -64,6 +64,8 @@ Pre-generated C headers are included at [`mars_bluetooth_hci.h`](mars_bluetooth_
 
 A CMake config is provided at [`mars-bluetooth-hci-rust-config.cmake`](mars-bluetooth-hci-rust-config.cmake) for embedding into C projects, including cross-compilation for ARM Cortex-M targets.
 
+For a full build/link + FFI call-pattern walkthrough, see [docs/c-embedded-integration.md](../docs/c-embedded-integration.md).
+
 ## `no_std` Support
 
 Disable default features and enable the required `libc*` features for your target:
