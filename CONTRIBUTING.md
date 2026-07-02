@@ -80,8 +80,9 @@ cargo +nightly fmt --all -- --check
   rustup component add rustfmt --toolchain nightly
   ```
 
-These four commands are the complete set CI runs. Passing all four locally (plus the
-header check in §1) is equivalent to passing CI's build/test/lint/format jobs.
+These four commands cover CI's build/test/lint/format jobs; CI also runs the README
+version check in §5. Passing all four locally (plus the header check in §1 and the
+README version check in §5) is equivalent to passing CI.
 
 ## 3. `no_std` / embedded cross-compile testing
 

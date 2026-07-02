@@ -19,15 +19,15 @@ from __future__ import annotations
 
 import re
 import sys
-import tomllib
-from pathlib import Path
-from typing import NoReturn
 
 if sys.version_info < (3, 11):
     sys.exit(
         "check_readme_versions: requires Python 3.11+ (stdlib tomllib). "
         f"Found {sys.version.split()[0]}."
     )
+
+import tomllib
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -38,37 +38,36 @@ CRATES = [
 ]
 
 
-def fail(msg: str) -> NoReturn:
-    print(f"check_readme_versions: ERROR: {msg}", file=sys.stderr)
-    sys.exit(1)
+class CheckError(Exception):
+    """Per-crate error: report it but keep checking the remaining crates."""
 
 
 def major_minor(version: str, where: str) -> str:
     """Reduce a version string to MAJOR.MINOR. Strips -pre/+build, tolerates
-    minor-only requirements. Fails loudly on non-numeric cores."""
+    minor-only requirements. Raises CheckError on non-numeric cores."""
     core = version.split("-", 1)[0].split("+", 1)[0]
     parts = core.split(".")
     if len(parts) < 2 or not all(p.isdigit() for p in parts):
-        fail(f"unparseable version {version!r} in {where}")
+        raise CheckError(f"unparseable version {version!r} in {where}")
     return f"{parts[0]}.{parts[1]}"
 
 
 def manifest_version(crate_dir: str) -> str:
     cargo = ROOT / crate_dir / "Cargo.toml"
     if not cargo.is_file():
-        fail(f"manifest not found: {cargo}")
+        raise CheckError(f"manifest not found: {cargo}")
     with cargo.open("rb") as fh:
         data = tomllib.load(fh)
     pkg = data.get("package")
     if not isinstance(pkg, dict) or "version" not in pkg:
-        fail(f"[package].version missing in {cargo}")
+        raise CheckError(f"[package].version missing in {cargo}")
     return pkg["version"]
 
 
 def readme_snippet_version(crate_name: str, readme_rel: str) -> str:
     readme = ROOT / readme_rel
     if not readme.is_file():
-        fail(f"README not found: {readme}")
+        raise CheckError(f"README not found: {readme}")
     text = readme.read_text(encoding="utf-8")
     line_pat = re.compile(
         r"^[ \t]*" + re.escape(crate_name) + r"[ \t]*=[ \t]*\{(?P<inner>[^}]*)\}",
@@ -76,20 +75,25 @@ def readme_snippet_version(crate_name: str, readme_rel: str) -> str:
     )
     line_m = line_pat.search(text)
     if not line_m:
-        fail(f"no `{crate_name} = {{ ... }}` dependency snippet found in {readme}")
+        raise CheckError(f"no `{crate_name} = {{ ... }}` dependency snippet found in {readme}")
     ver_m = re.search(r"\bversion[ \t]*=[ \t]*\"([^\"]+)\"", line_m.group("inner"))
     if not ver_m:
-        fail(f"`{crate_name} = {{ ... }}` snippet in {readme} has no `version = \"...\"` key")
+        raise CheckError(f"`{crate_name} = {{ ... }}` snippet in {readme} has no `version = \"...\"` key")
     return ver_m.group(1)
 
 
 def main() -> int:
     ok = True
     for crate_dir, crate_name, readme_rel in CRATES:
-        mv = manifest_version(crate_dir)
-        rv = readme_snippet_version(crate_name, readme_rel)
-        mm_mv = major_minor(mv, f"{crate_dir}/Cargo.toml")
-        mm_rv = major_minor(rv, f"{readme_rel} ({crate_name})")
+        try:
+            mv = manifest_version(crate_dir)
+            rv = readme_snippet_version(crate_name, readme_rel)
+            mm_mv = major_minor(mv, f"{crate_dir}/Cargo.toml")
+            mm_rv = major_minor(rv, f"{readme_rel} ({crate_name})")
+        except CheckError as exc:
+            ok = False
+            print(f"check_readme_versions: ERROR: {exc}", file=sys.stderr)
+            continue
         if mm_mv != mm_rv:
             ok = False
             print(
