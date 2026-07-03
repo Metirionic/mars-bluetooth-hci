@@ -37,6 +37,34 @@ For the full, annotated data flow (build-time `FetchContent` mechanics, the seri
 - `postcard` + COBS wire format — self-framing, trailing-`0x00`-delimited; this repo is the authoritative spec → `docs/wire-format.md`, `docs/adr/0001-wire-format-postcard-cobs.md`.
 - CMake / `FetchContent` — pre-generated C header + `mars-bluetooth-hci-rust-config.cmake`, including cross-compilation → `docs/c-embedded-integration.md`.
 
+## Quick start
+
+The real consumer path — serialize a Channel Sounding subevent-result event over the C FFI and hand the COBS-framed bytes to UART (matches the generated header `mars-bluetooth-hci/mars_bluetooth_hci.h`):
+
+```c
+SubeventResultEvent_t event = { /* from the CS controller */ };
+
+SerializedData_t buf =
+    serialize_subevent_result_event(&event, /*use_cobs=*/true);
+/* buf.p_data / buf.size : COBS-framed postcard + trailing 0x00 */
+
+uart_tx(buf.p_data, buf.size);
+drop_bin(buf);                        /* free when done */
+```
+
+For the full build/link + FFI walkthrough, see [`docs/c-embedded-integration.md`](docs/c-embedded-integration.md). For the Rust parser API, see the [`mars-bluetooth-hci`](mars-bluetooth-hci/README.md) sub-README and [docs.rs](https://docs.rs/mars-bluetooth-hci).
+
+## Go deeper
+
+| Document | Covers |
+|----------|--------|
+| [`docs/ecosystem.md`](docs/ecosystem.md) | three-repo split, open/closed boundary, full data flow |
+| [`docs/architecture.md`](docs/architecture.md) | internal architecture, HCI→UART sequence |
+| [`docs/wire-format.md`](docs/wire-format.md) | envelope, postcard, COBS framing, trailing 0x00 |
+| [`docs/c-embedded-integration.md`](docs/c-embedded-integration.md) | C FFI + CMake, cross-compilation |
+| [`docs/adr/`](docs/adr/) | architecture decision records |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | build, headers, release flow |
+
 ## License
 
 Licensed under the [MIT License](LICENSE).
