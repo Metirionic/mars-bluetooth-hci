@@ -80,9 +80,9 @@ cargo +nightly fmt --all -- --check
   rustup component add rustfmt --toolchain nightly
   ```
 
-These four commands cover CI's build/test/lint/format jobs; CI also runs the README
-version check in §5. Passing all four locally (plus the header check in §1 and the
-README version check in §5) is equivalent to passing CI.
+These four commands cover CI's build/test/lint/format jobs; CI also runs the
+version-literal check in §5. Passing all four locally (plus the header check in
+§1 and the version-literal check in §5) is equivalent to passing CI.
 
 ## 3. `no_std` / embedded cross-compile testing
 
@@ -179,36 +179,41 @@ does the rest.
   No GitHub Release objects are created (that job was removed). Releases only happen from
   `main` (`branch_whitelist = ["main"]`).
 
-## 5. Keeping README version snippets in sync
+## 5. Keeping README and docs/ version literals in sync
 
-The per-crate READMEs each contain a dependency snippet with a version literal that must
-track the published crate version:
+The per-crate READMEs each contain a dependency snippet with a version literal, and
+`docs/` prose names the crates with version literals; both must track the published
+crate version:
 
 - [`mars-bluetooth-hci/README.md`](mars-bluetooth-hci/README.md) —
   `mars-bluetooth-hci = { version = "…", … }`
 - [`mars-common/README.md`](mars-common/README.md) —
   `mars-common = { version = "…", … }`
+- [`docs/architecture.md`](docs/architecture.md) — `mars-bluetooth-hci` and
+  `mars-common` in the `(vX.Y.Z)` prose form
+- [`docs/c-embedded-integration.md`](docs/c-embedded-integration.md) —
+  `mars-bluetooth-hci` in the `@X.Y.Z` prose form (`GIT_TAG` pin)
 
-The `cog` `cargo set-version` hook only updates `Cargo.toml`, not the READMEs, so
-updating the version literal in each sub-README is still a **manual pre-release step**
-— after a version bump, update the version literal in each sub-README to match the new
-`Cargo.toml` version. A CI gate now catches drift: the `version-check` job in
+The `cog` `cargo set-version` hook only updates `Cargo.toml`, not the READMEs or the
+docs, so updating every version literal is still a **manual pre-release step** — after
+a version bump, update each literal to match the new `Cargo.toml` version. A CI gate
+catches drift: the `version-check` job in
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml), backed by
 [`.github/scripts/check_readme_versions.py`](.github/scripts/check_readme_versions.py),
-walks every crate in `[workspace].members` and fails the build if a sub-README's
+walks every crate in `[workspace].members` and fails the build if either a sub-README's
 `<crate> = { version = "…", … }` snippet diverges from the crate's `Cargo.toml`
 `version` (both compared on `MAJOR.MINOR`, since the snippets intentionally use a
-minor-only SemVer requirement). Run it locally before pushing:
+minor-only SemVer requirement), or a `docs/` prose literal of the `(vX.Y.Z)` or
+`@X.Y.Z` form diverges (compared on the full version, so a patch bump must update the
+prose too). Run it locally before pushing:
 
 ```bash
 python3 .github/scripts/check_readme_versions.py
 ```
 
 The root [`README.md`](README.md) uses crates.io shields badges rather than version
-literals, so it needs no syncing. Prose version literals in `docs/` (e.g.
-[`docs/architecture.md`](docs/architecture.md),
-[`docs/c-embedded-integration.md`](docs/c-embedded-integration.md)) are **not yet
-gated** and remain a manual pre-release step — tracked in #27.
+literals, so it needs no syncing. The cog-generated `*/CHANGELOG.md` files are also out
+of scope.
 
 ## 6. Documentation structure
 
