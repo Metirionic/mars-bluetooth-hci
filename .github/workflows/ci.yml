@@ -62,9 +62,9 @@ jobs:
         run: diff mars-bluetooth-hci/mars_bluetooth_hci.h /tmp/mars_bluetooth_hci.h
 
   version-check:
-    name: README version snippets
+    name: README + docs/ version literals
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: README snippets match Cargo.toml versions
+      - name: README snippets and docs/ prose match Cargo.toml versions
         run: python3 .github/scripts/check_readme_versions.py

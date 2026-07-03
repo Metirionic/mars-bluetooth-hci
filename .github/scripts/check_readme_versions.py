@@ -1,19 +1,25 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
-"""Assert per-crate README dependency snippets match the crate manifest versions.
+"""Assert per-crate README dependency snippets and docs/ prose version literals
+match the crate manifest versions.
 
 For each crate in the root Cargo.toml's `[workspace].members`, read the package
-`version` from the crate's Cargo.toml and the `version = "<v>"` from the
-README's `<crate> = { version = "...", ... }` dependency snippet, normalize both
-to MAJOR.MINOR, and exit non-zero on mismatch or if either version cannot be
-found.
+`version` from the crate's Cargo.toml and check:
+  * the `version = "<v>"` from the README's `<crate> = { version = "...", ... }`
+    dependency snippet, normalizing both to MAJOR.MINOR; and
+  * every docs/ prose version literal that names the crate — in the forms
+    `` `<crate>` (vX.Y.Z) `` or `` <crate>@X.Y.Z `` — compared against the
+    manifest on the full version (MAJOR.MINOR.PATCH core).
+Exit non-zero on any mismatch, or if a README snippet or manifest version cannot
+be found or parsed.
 
 Invoked by the `version-check` job in .github/workflows/ci.yml and runnable
 locally: `python3 .github/scripts/check_readme_versions.py`.
 
-Scope: each workspace member's sub-README. The root README uses crates.io
-shields badges and is intentionally out of scope (see CONTRIBUTING.md §5). Prose
-version literals in docs/ are also out of scope.
+Scope: each workspace member's sub-README (MAJOR.MINOR) and the prose version
+literals in docs/**/*.md (full version). The root README uses crates.io shields
+badges and is intentionally out of scope, as are the cog-generated
+*/CHANGELOG.md files (see CONTRIBUTING.md §5).
 """
 
 from __future__ import annotations
@@ -86,6 +92,19 @@ def major_minor(version: str, where: str) -> str:
     return f"{parts[0]}.{parts[1]}"
 
 
+def version_core(version: str, where: str) -> str:
+    """Return the full dotted core (MAJOR.MINOR.PATCH) with -pre/+build stripped,
+    validating every dot-separated part is numeric. Used for the docs/ prose
+    exact-match check (full version), unlike ``major_minor``'s MAJOR.MINOR
+    reduction used for the minor-only README snippets. Raises CheckError on a
+    non-numeric core."""
+    core = version.split("-", 1)[0].split("+", 1)[0]
+    parts = core.split(".")
+    if not parts or not all(p.isdigit() for p in parts):
+        raise CheckError(f"unparseable version {version!r} in {where}")
+    return core
+
+
 def readme_snippet_version(crate_name: str, readme_rel: str) -> str:
     readme = ROOT / readme_rel
     if not readme.is_file():
@@ -104,8 +123,74 @@ def readme_snippet_version(crate_name: str, readme_rel: str) -> str:
     return ver_m.group(1)
 
 
+def load_docs() -> list[tuple[str, str]]:
+    """Return ``(repo-relative path, text)`` for every ``docs/**/*.md`` file,
+    sorted for stable output. Returns an empty list if ``docs/`` is absent, in
+    which case the prose pass is a no-op."""
+    docs_root = ROOT / "docs"
+    if not docs_root.is_dir():
+        return []
+    out = []
+    for path in sorted(docs_root.rglob("*.md")):
+        rel = path.relative_to(ROOT).as_posix()
+        out.append((rel, path.read_text(encoding="utf-8")))
+    return out
+
+
+def check_docs_prose(crate_name: str, manifest_version: str, docs: list[tuple[str, str]]) -> bool:
+    """Check every docs/ prose version literal naming ``crate_name`` against the
+    manifest version (full MAJOR.MINOR.PATCH core match). Returns True iff every
+    literal matches; prints OK / MISMATCH / ERROR per literal. A crate with no
+    prose literal is not an error (returns True) — not every crate must appear in
+    docs prose. Per-literal isolation keeps one malformed literal from aborting
+    the rest.
+
+    Two prose forms are recognised, each anchored on the exact crate name so
+    unrelated version mentions (e.g. external crates like ``postcard v1.1.3``)
+    are not flagged:
+
+      * `` `<crate>` (vX.Y.Z) ``  — backticked name + parenthesized v + full SemVer
+      * `` <crate>@X.Y.Z ``       — name + @ + full SemVer (e.g. ``GIT_TAG <crate>@0.8.0``)
+
+    The ``(?<![\\w-])`` lookbehind prevents matching the crate name as a
+    substring of a longer token before ``@``.
+    """
+    ok = True
+    manifest_core = version_core(manifest_version, f"{crate_name} Cargo.toml")
+    paren_v = re.compile(r"`" + re.escape(crate_name) + r"`\s*\(v(?P<v>\d+\.\d+\.\d+)\)")
+    at_ver = re.compile(r"(?<![\w-])" + re.escape(crate_name) + r"@(?P<v>\d+\.\d+\.\d+)")
+    for rel, text in docs:
+        for lineno, line in enumerate(text.splitlines(), 1):
+            for pat, fmt in ((paren_v, "(vX.Y.Z)"), (at_ver, "@X.Y.Z")):
+                for m in pat.finditer(line):
+                    pv = m.group("v")
+                    try:
+                        pv_core = version_core(pv, f"{rel}:{lineno}")
+                    except CheckError as exc:
+                        ok = False
+                        print(f"check_readme_versions: ERROR: {exc}", file=sys.stderr)
+                        continue
+                    if pv_core != manifest_core:
+                        ok = False
+                        print(
+                            f"check_readme_versions: MISMATCH `{crate_name}` docs prose "
+                            f"{rel}:{lineno} ({fmt} {pv!r}) != Cargo.toml "
+                            f"{manifest_version!r}. Update the docs/ prose literal "
+                            f"to match the manifest version.",
+                            file=sys.stderr,
+                        )
+                    else:
+                        print(
+                            f"check_readme_versions: OK `{crate_name}` docs prose "
+                            f"{rel}:{lineno} ({fmt} {pv!r} ~ manifest "
+                            f"{manifest_version!r})"
+                        )
+    return ok
+
+
 def main() -> int:
     ok = True
+    docs = load_docs()
     for crate_dir in workspace_members():
         readme_rel = f"{crate_dir}/README.md"
         try:
@@ -131,6 +216,9 @@ def main() -> int:
                 f"check_readme_versions: OK `{crate_name}` "
                 f"(README {rv!r} ~ manifest {mv!r})"
             )
+        # docs/ prose pass: full-version (MAJOR.MINOR.PATCH core) match.
+        if not check_docs_prose(crate_name, mv, docs):
+            ok = False
     return 0 if ok else 1
 
 
