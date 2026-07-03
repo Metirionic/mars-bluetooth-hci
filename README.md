@@ -23,6 +23,20 @@ flowchart LR
 
 For the full, annotated data flow (build-time `FetchContent` mechanics, the serialize call/return, and the UART transport), see [`docs/ecosystem.md`](docs/ecosystem.md).
 
+## What's inside
+
+![no_std](https://img.shields.io/badge/no__std-supported-orange) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+| Crate | Badges | Description |
+|-------|--------|-------------|
+| [`mars-bluetooth-hci`](mars-bluetooth-hci/README.md) | [![crates.io](https://img.shields.io/crates/v/mars-bluetooth-hci.svg)](https://crates.io/crates/mars-bluetooth-hci) [![docs.rs](https://docs.rs/mars-bluetooth-hci/badge.svg)](https://docs.rs/mars-bluetooth-hci) | Parses HCI LE CS subevent-result events (`0x31` config, `0x32` subevent-result) and serializes them over a C FFI. |
+| [`mars-common`](mars-common/README.md) | [![crates.io](https://img.shields.io/crates/v/mars-common.svg)](https://crates.io/crates/mars-common) [![docs.rs](https://docs.rs/mars-common/badge.svg)](https://docs.rs/mars-common) | Shared FFI-safe `SerializedData` buffer, `drop_bin`, C allocator/panic bridges, and `log`/`defmt` logging dispatch. |
+
+- `no_std` + embedded — bare-metal Cortex-M (e.g. `thumbv6m-none-eabi`), `panic = "abort"` compatible.
+- Serialize-only FFI — serialization and memory management only cross the C boundary (no `parse_*`/`decode_*`/`deserialize_*`); the HCI parser is a Rust-API concern → `docs/adr/0002-serialize-only-ffi.md`.
+- `postcard` + COBS wire format — self-framing, trailing-`0x00`-delimited; this repo is the authoritative spec → `docs/wire-format.md`, `docs/adr/0001-wire-format-postcard-cobs.md`.
+- CMake / `FetchContent` — pre-generated C header + `mars-bluetooth-hci-rust-config.cmake`, including cross-compilation.
+
 ## License
 
 Licensed under the [MIT License](LICENSE).
