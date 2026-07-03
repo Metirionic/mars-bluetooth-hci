@@ -190,21 +190,25 @@ track the published crate version:
   `mars-common = { version = "…", … }`
 
 The `cog` `cargo set-version` hook only updates `Cargo.toml`, not the READMEs, so
-updating the version literal in both sub-READMEs is still a **manual pre-release step**
-— after a version bump, update the version literal in both sub-READMEs to match the new
+updating the version literal in each sub-README is still a **manual pre-release step**
+— after a version bump, update the version literal in each sub-README to match the new
 `Cargo.toml` version. A CI gate now catches drift: the `version-check` job in
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml), backed by
 [`.github/scripts/check_readme_versions.py`](.github/scripts/check_readme_versions.py),
-fails the build if a sub-README's `<crate> = { version = "…", … }` snippet diverges from
-the crate's `Cargo.toml` `version` (both compared on `MAJOR.MINOR`, since the snippets
-intentionally use a minor-only SemVer requirement). Run it locally before pushing:
+walks every crate in `[workspace].members` and fails the build if a sub-README's
+`<crate> = { version = "…", … }` snippet diverges from the crate's `Cargo.toml`
+`version` (both compared on `MAJOR.MINOR`, since the snippets intentionally use a
+minor-only SemVer requirement). Run it locally before pushing:
 
 ```bash
 python3 .github/scripts/check_readme_versions.py
 ```
 
 The root [`README.md`](README.md) uses crates.io shields badges rather than version
-literals, so it needs no syncing.
+literals, so it needs no syncing. Prose version literals in `docs/` (e.g.
+[`docs/architecture.md`](docs/architecture.md),
+[`docs/c-embedded-integration.md`](docs/c-embedded-integration.md)) are **not yet
+gated** and remain a manual pre-release step — tracked in #27.
 
 ## 6. Documentation structure
 
