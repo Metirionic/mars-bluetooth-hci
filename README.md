@@ -14,7 +14,7 @@ flowchart LR
     LIB["<b>mars-bluetooth-hci</b><br/>this repo (open)"]
     APP["<b>mars-ranging-demo</b><br/>eval GUI (closed)"]
     FW -->|"serialize call"| LIB
-    LIB -->|"COBS over UART"| APP
+    FW -->|"COBS over UART"| APP
     classDef open fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#1b5e20
     classDef closed fill:#fce4ec,stroke:#c62828,stroke-width:2px,stroke-dasharray:6 4,color:#b71c1c
     class FW,LIB open

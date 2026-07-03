@@ -1,6 +1,6 @@
-# Mars Bluetooth HCI
+# MARS Bluetooth HCI
 
-The ubiquitous language for the Mars Bluetooth HCI library — the Channel Sounding domain terms and the library's encoder/decoder roles an agent needs to orient quickly. It defines vocabulary only and links to [docs/architecture.md](docs/architecture.md) and [docs/adr/](docs/adr) for the HOW and WHY.
+The ubiquitous language for the MARS Bluetooth HCI library — the Channel Sounding domain terms and the library's encoder/decoder roles an agent needs to orient quickly. It defines vocabulary only and links to [docs/architecture.md](docs/architecture.md) and [docs/adr/](docs/adr) for the HOW and WHY.
 
 ## Language
 

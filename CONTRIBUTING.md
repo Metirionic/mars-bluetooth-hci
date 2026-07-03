@@ -211,8 +211,8 @@ prose too). Run it locally before pushing:
 python3 .github/scripts/check_readme_versions.py
 ```
 
-The root [`README.md`](README.md) uses crates.io shields badges rather than version
-literals, so it needs no syncing. The cog-generated `*/CHANGELOG.md` files are also out
+The root [`README.md`](README.md) is not a workspace-member crate README and carries no
+version literals, so it needs no syncing. The cog-generated `*/CHANGELOG.md` files are also out
 of scope.
 
 ## 6. Documentation structure
