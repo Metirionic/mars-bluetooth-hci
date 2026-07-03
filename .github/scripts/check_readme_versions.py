@@ -17,9 +17,9 @@ Invoked by the `version-check` job in .github/workflows/ci.yml and runnable
 locally: `python3 .github/scripts/check_readme_versions.py`.
 
 Scope: each workspace member's sub-README (MAJOR.MINOR) and the prose version
-literals in docs/**/*.md (full version). The root README uses crates.io shields
-badges and is intentionally out of scope, as are the cog-generated
-*/CHANGELOG.md files (see CONTRIBUTING.md §5).
+literals in docs/**/*.md (full version). The root README is not a workspace-member crate README and carries no
+version literals, so it is intentionally out of scope, as are the
+cog-generated */CHANGELOG.md files (see CONTRIBUTING.md §5).
 """
 
 from __future__ import annotations

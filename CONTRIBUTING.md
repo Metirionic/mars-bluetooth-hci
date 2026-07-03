@@ -1,4 +1,4 @@
-# Contributing to Mars Bluetooth HCI
+# Contributing to MARS Bluetooth HCI
 
 Thanks for contributing to `mars-bluetooth-hci` — the open-source interface to the
 Metirionic Advanced Ranging Stack (MARS). This guide documents the development and
