@@ -1,5 +1,5 @@
 # @file
-# CMake package configuration for the Mars Bluetooth HCI Rust library.
+# CMake package configuration for the MARS Bluetooth HCI Rust library.
 message(
   STATUS
   "Enabling Mars BT HCI rust library components from ${CMAKE_CURRENT_LIST_DIR}"
