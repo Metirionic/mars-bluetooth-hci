@@ -1,18 +1,39 @@
 # Mars Bluetooth HCI
 
-Bluetooth HCI event parsing library for [Bluetooth Channel Sounding](https://www.bluetooth.com/blog/bluetooth-channel-sounding/) (BLE CS).
+The open encoder, parser, and C-FFI bridge for the Metirionic Advanced
+Ranging Stack (MARS) - this repository defines the authoritative Channel
+Sounding wire format consumed by MARS firmware and the closed-source
+evaluation GUI.
 
-## Crates
+## Where it fits
 
-| Crate | Version | Description |
-|-------|---------|-------------|
-| [`mars-bluetooth-hci`](https://crates.io/crates/mars-bluetooth-hci) | [![crates.io](https://img.shields.io/crates/v/mars-bluetooth-hci.svg)](https://crates.io/crates/mars-bluetooth-hci) | HCI event parsing for BLE CS subevents |
-| [`mars-common`](https://crates.io/crates/mars-common) | [![crates.io](https://img.shields.io/crates/v/mars-common.svg)](https://crates.io/crates/mars-common) | Shared FFI infrastructure and logging dispatch |
+The MARS Channel Sounding ecosystem spans three repositories: `mars-cs-nrf54l`
+firmware is open, `mars-bluetooth-hci` is this open library, and
+`mars-ranging-demo` is a public repository with a closed-source evaluation GUI.
+MARS is separately licensed from those repositories. This library parses and
+serializes Channel Sounding measurement data and defines the wire format
+between firmware and GUI; it does not compute ranging or distance.
 
-See each crate's README for feature flags, C FFI details, and usage examples:
+<!--
+docs/ecosystem.md is the canonical, fully annotated data-flow source; keep this
+landing diagram in sync.
+-->
 
-- [`mars-bluetooth-hci/README.md`](mars-bluetooth-hci/README.md)
-- [`mars-common/README.md`](mars-common/README.md)
+```mermaid
+flowchart LR
+    FW["<b>mars-cs-nrf54l</b><br/>firmware (open)"]
+    LIB["<b>mars-bluetooth-hci</b><br/>this repo (open)"]
+    APP["<b>mars-ranging-demo</b><br/>eval GUI (closed)"]
+    FW -->|"serialize call"| LIB
+    LIB -->|"COBS over UART"| APP
+    classDef open fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#1b5e20
+    classDef closed fill:#fce4ec,stroke:#c62828,stroke-width:2px,stroke-dasharray:6 4,color:#b71c1c
+    class FW,LIB open
+    class APP closed
+```
+
+For the full annotated ecosystem data flow, see
+[docs/ecosystem.md](docs/ecosystem.md).
 
 ## License
 
