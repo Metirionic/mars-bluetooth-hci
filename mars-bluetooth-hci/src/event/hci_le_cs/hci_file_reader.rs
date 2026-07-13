@@ -79,8 +79,7 @@ pub fn read_file(path: &PathBuf) -> Vec<SubeventResultEvent> {
                 let digits = line.split_whitespace();
                 let values: Vec<u8> = digits.into_iter().map(|x| hex::decode(x).unwrap()[0]).collect();
 
-                let mut result = SubeventResultEvent::try_from(values.as_slice()).unwrap();
-                result.origin = node;
+                let result = SubeventResultEvent::try_from_with_origin(values.as_slice(), node).unwrap();
                 results.push(result);
 
                 ReadState::Event

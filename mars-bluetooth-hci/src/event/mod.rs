@@ -22,6 +22,12 @@ pub enum ParseError {
     /// The parsed mode type is not valid.
     #[error("invalid mode type `{0}` at byte `{1}`")]
     InvalidModeType(u8, usize),
+    /// The parsed step data length does not match the expected mode-specific length.
+    #[error("invalid step data length `{1}` for mode `{0}`, expected `{2}`")]
+    InvalidStepDataLength(u8, usize, usize),
+    /// The event origin is required for the selected mode but is unknown.
+    #[error("origin is unknown for mode `{0}`")]
+    UnknownOriginForMode(u8),
     /// The node's role is not "initiator".
     #[error("node's role is not initiator")]
     RoleNotInitiator,
