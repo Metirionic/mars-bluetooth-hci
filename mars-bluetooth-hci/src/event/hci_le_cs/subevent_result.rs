@@ -379,17 +379,22 @@ impl SubeventResultEvent {
         Self::parse_internal(message, origin)
     }
 
+    /// Length of a basic Mode 1 step payload.
     const MODE1_LEN: usize = 6;
+    /// Length of a Mode 1 step payload with packet phase correction terms.
     const MODE1_PBR_RTT_LEN: usize = 14;
 
+    /// Return the expected Mode 2 step payload length for an antenna path count.
     fn mode2_len(antenna_path_count: usize) -> usize {
         4 * antenna_path_count + 5
     }
 
+    /// Return the expected basic Mode 3 step payload length for an antenna path count.
     fn mode3_len(antenna_path_count: usize) -> usize {
         Self::MODE1_LEN + Self::mode2_len(antenna_path_count)
     }
 
+    /// Return the expected Mode 3 step payload length with packet phase correction terms.
     fn mode3_pbr_rtt_len(antenna_path_count: usize) -> usize {
         Self::MODE1_PBR_RTT_LEN + Self::mode2_len(antenna_path_count)
     }
@@ -614,6 +619,7 @@ impl SubeventResultEvent {
         Ok(())
     }
 
+    /// Select the Mode 1 role-specific payload kind for this event origin.
     fn mode_1_selector(&self, has_packet_phase_correction_terms: bool) -> ModeRoleSpecificInfoKind {
         match (self.origin, has_packet_phase_correction_terms) {
             (Origin::Initiator, false) => ModeRoleSpecificInfoKind::Mode1Initiator,
@@ -624,6 +630,7 @@ impl SubeventResultEvent {
         }
     }
 
+    /// Select the Mode 3 role-specific payload kind for this event origin.
     fn mode_3_selector(&self, has_packet_phase_correction_terms: bool) -> ModeRoleSpecificInfoKind {
         match (self.origin, has_packet_phase_correction_terms) {
             (Origin::Initiator, false) => ModeRoleSpecificInfoKind::Mode3Initiator,
@@ -634,6 +641,7 @@ impl SubeventResultEvent {
         }
     }
 
+    /// Parse a subevent result or continuation message with the supplied origin.
     fn parse_internal(message: &[u8], origin: Origin) -> Result<Self, ParseError> {
         let connection_handle = u16::from_le_bytes(message[1..3].try_into()?);
         let connection_handle_is_cs_test = connection_handle == handle::CS_TEST_CONNECTION_HANDLE;
