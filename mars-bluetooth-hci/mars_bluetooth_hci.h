@@ -272,6 +272,91 @@ enum ModeRoleSpecificInfoKind {
 ModeRoleSpecificInfoKind_t;
 
 /** \brief
+ *  Decoded contents of the packet quality byte.
+ */
+typedef struct PacketQuality {
+    /** \brief
+     *  Result of the access address check from the low nibble.
+     */
+    uint8_t access_address_check_result;
+
+    /** \brief
+     *  Payload bit error count from the high nibble.
+     */
+    uint8_t payload_bit_error_count;
+} PacketQuality_t;
+
+/** \brief
+ *  Packet-level fields shared by time-based ranging modes.
+ */
+typedef struct RoundTripTimePacketFields {
+    /** \brief
+     *  Decoded packet quality fields.
+     */
+    PacketQuality_t packet_quality;
+
+    /** \brief
+     *  Normalized attack detector metric for the packet.
+     */
+    uint8_t packet_normalized_attack_detector_metric;
+
+    /** \brief
+     *  Received signal strength indicator for the packet.
+     */
+    int8_t packet_received_signal_strength_indicator;
+
+    /** \brief
+     *  Antenna used for the packet measurement.
+     */
+    uint8_t packet_antenna;
+} RoundTripTimePacketFields_t;
+
+/** \brief
+ *  Indicates which role-specific timing interpretation is valid.
+ */
+/** \remark Has the same ABI as `uint8_t` **/
+#ifdef DOXYGEN
+typedef
+#endif
+enum RoundTripTimeRoleTimingKind {
+    /** \brief
+     *  No role-specific timing has been assigned yet.
+     */
+    ROUND_TRIP_TIME_ROLE_TIMING_KIND_UNAVAILABLE,
+    /** \brief
+     *  Timing field `ToA_ToD_Initiator`.
+     */
+    ROUND_TRIP_TIME_ROLE_TIMING_KIND_TIME_OF_ARRIVAL_TIME_OF_DEPARTURE_INITIATOR,
+    /** \brief
+     *  Timing field `ToD_ToA_Reflector`.
+     */
+    ROUND_TRIP_TIME_ROLE_TIMING_KIND_TIME_OF_DEPARTURE_TIME_OF_ARRIVAL_REFLECTOR,
+}
+#ifndef DOXYGEN
+; typedef uint8_t
+#endif
+RoundTripTimeRoleTimingKind_t;
+
+/** \brief
+ *  Role-specific time delta for time-based ranging.
+ *
+ *  The raw role-specific timing value uses a time base of `0.5 ns` per least significant bit.
+ */
+typedef struct RoundTripTimeRoleTiming {
+    /** \brief
+     *  Indicates which role-specific timing field is valid.
+     */
+    RoundTripTimeRoleTimingKind_t kind;
+
+    /** \brief
+     *  Signed value of the selected role-specific timing field.
+     *
+     *  Stored with a time base of `0.5 ns` per least significant bit.
+     */
+    int16_t role_specific_timing_value;
+} RoundTripTimeRoleTiming_t;
+
+/** \brief
  *  The phase correction term (PCT), composed of I and Q components.
  */
 typedef struct PhaseCorrectionTerm {
@@ -285,6 +370,46 @@ typedef struct PhaseCorrectionTerm {
      */
     float q;
 } PhaseCorrectionTerm_t;
+
+/** \brief
+ *  Optional packet phase correction terms for enhanced packet-based ranging.
+ */
+typedef struct PacketPhaseCorrectionTerms {
+    /** \brief
+     *  First packet phase correction term.
+     */
+    PhaseCorrectionTerm_t first_phase_correction_term;
+
+    /** \brief
+     *  Second packet phase correction term.
+     */
+    PhaseCorrectionTerm_t second_phase_correction_term;
+} PacketPhaseCorrectionTerms_t;
+
+/** \brief
+ *  Compact Mode 1 payload stored once per reported step.
+ */
+typedef struct Mode1Data {
+    /** \brief
+     *  Shared packet-level fields.
+     */
+    RoundTripTimePacketFields_t packet;
+
+    /** \brief
+     *  Role-specific RTT timing delta.
+     */
+    RoundTripTimeRoleTiming_t timing;
+
+    /** \brief
+     *  Optional packet phase correction terms.
+     */
+    PacketPhaseCorrectionTerms_t packet_phase_correction_terms;
+
+    /** \brief
+     *  If true, `packet_phase_correction_terms` is valid.
+     */
+    bool has_packet_phase_correction_terms;
+} Mode1Data_t;
 
 typedef struct {
     PhaseCorrectionTerm_t idx[5];
@@ -390,9 +515,64 @@ typedef struct Mode2 {
 } Mode2_t;
 
 /** \brief
+ *  Grouped tone fields shared by Mode 2 and Mode 3.
+ */
+typedef struct ToneSection {
+    /** \brief
+     *  The selected antenna permutation index.
+     */
+    uint8_t antenna_permutation_index;
+
+    /** \brief
+     *  The phase correction terms for the tone sequence.
+     */
+    PhaseCorrectionTerm_5_array_t phase_correction_terms;
+
+    /** \brief
+     *  The quality indicators for the tone sequence.
+     */
+    ToneQualityIndicator_5_array_t quality_indicators;
+
+    /** \brief
+     *  The selected extension slots for the tone sequence.
+     */
+    ExtensionSlot_5_array_t extension_slots;
+} ToneSection_t;
+
+/** \brief
+ *  Compact Mode 3 payload stored once per reported step.
+ */
+typedef struct Mode3Data {
+    /** \brief
+     *  Shared packet-level fields.
+     */
+    RoundTripTimePacketFields_t packet;
+
+    /** \brief
+     *  Role-specific RTT timing delta.
+     */
+    RoundTripTimeRoleTiming_t timing;
+
+    /** \brief
+     *  Grouped tone fields.
+     */
+    ToneSection_t tones;
+
+    /** \brief
+     *  Optional packet phase correction terms.
+     */
+    PacketPhaseCorrectionTerms_t packet_phase_correction_terms;
+
+    /** \brief
+     *  If true, `packet_phase_correction_terms` is valid.
+     */
+    bool has_packet_phase_correction_terms;
+} Mode3Data_t;
+
+/** \brief
  *  Mode- and role-specific information.
  *
- *  The `mode2` field is only valid when `kind` is [`ModeRoleSpecificInfoKind::Mode2`].
+ *  The payload fields are selected by `kind`.
  */
 typedef struct ModeRoleSpecificInfo {
     /** \brief
@@ -401,9 +581,28 @@ typedef struct ModeRoleSpecificInfo {
     ModeRoleSpecificInfoKind_t kind;
 
     /** \brief
-     *  Mode2 data. Only valid when `kind` is [`ModeRoleSpecificInfoKind::Mode2`].
+     *  Mode1 data. Valid when `kind`
+     *  is [`ModeRoleSpecificInfoKind::Mode1Initiator`]
+     *  or [`ModeRoleSpecificInfoKind::Mode1InitiatorPbrRtt`]
+     *  or [`ModeRoleSpecificInfoKind::Mode1Reflector`]
+     *  or [`ModeRoleSpecificInfoKind::Mode1ReflectorPbrRtt`].
+     */
+    Mode1Data_t mode1;
+
+    /** \brief
+     *  Mode2 data. Only valid when `kind`
+     *  is [`ModeRoleSpecificInfoKind::Mode2`].
      */
     Mode2_t mode2;
+
+    /** \brief
+     *  Mode3 data. Valid when `kind`
+     *  is [`ModeRoleSpecificInfoKind::Mode3Initiator`]
+     *  or [`ModeRoleSpecificInfoKind::Mode3InitiatorPbrRtt`]
+     *  or [`ModeRoleSpecificInfoKind::Mode3Reflector`]
+     *  or [`ModeRoleSpecificInfoKind::Mode3ReflectorPbrRtt`].
+     */
+    Mode3Data_t mode3;
 } ModeRoleSpecificInfo_t;
 
 /** \brief
