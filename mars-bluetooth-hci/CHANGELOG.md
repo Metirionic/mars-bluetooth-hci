@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com), and this project adheres to [Semantic Versioning](https://semver.org).
 
 - - -
+## [mars-bluetooth-hci@0.9.0](https://github.com/Metirionic/mars-bluetooth-hci/compare/caf2398ee278187a702208d86861212660e01440..mars-bluetooth-hci@0.9.0) - 2026-07-14
+#### Features
+- add mode 1 and mode 3 subevent result support - ([e719422](https://github.com/Metirionic/mars-bluetooth-hci/commit/e719422f54cc17351c09b8fa9f88f0af652a5545)) - Johannes Guertler
+#### Bug Fixes
+- format pipeline - ([8499fa4](https://github.com/Metirionic/mars-bluetooth-hci/commit/8499fa4cdd72b425f7b27c81f1aa85236f5e524a)) - Johannes Guertler
+- clippy pipeline - ([af11e3c](https://github.com/Metirionic/mars-bluetooth-hci/commit/af11e3cb02ffbd0ca75a9b70806dad64ce6055da)) - Johannes Guertler
+#### Documentation
+- complete MARS-name alignment and sync version-check docstring - ([f5a4015](https://github.com/Metirionic/mars-bluetooth-hci/commit/f5a4015eb3f52b60770b1cb53af3640faba7b2c6)) - Attila Römer, Claude
+- add C/embedded integration guide (#14) - ([99a049e](https://github.com/Metirionic/mars-bluetooth-hci/commit/99a049e9aa82eaac1a2ba50a7932ea62bede27d3)) - Attila Römer, Claude
+- scope file-reader-helper reference to origin in TryFrom doc - ([5bcedea](https://github.com/Metirionic/mars-bluetooth-hci/commit/5bcedeae8ab3f6fdbbed3997ed217ee76845f9c5)) - Attila Römer, Claude
+- document ModeRoleSpecificInfoKind variants and add parse-from-bytes doctest (#7) - ([caf2398](https://github.com/Metirionic/mars-bluetooth-hci/commit/caf2398ee278187a702208d86861212660e01440)) - Attila Römer, Claude
+#### Refactoring
+- ![BREAKING](https://img.shields.io/badge/BREAKING-red) remove dead Unsupported placeholder struct - ([ecc4e57](https://github.com/Metirionic/mars-bluetooth-hci/commit/ecc4e57139ea8fb4a35058a4c251cef01684c494)) - Attila Römer, Claude
+
+- - -
+
 ## [mars-bluetooth-hci@0.8.0](https://github.com/Metirionic/mars-bluetooth-hci/compare/0cd79b49b3775c7ad81eaf39c0f682914c1bd23e..mars-bluetooth-hci@0.8.0) - 2026-06-15
 
 - - -
