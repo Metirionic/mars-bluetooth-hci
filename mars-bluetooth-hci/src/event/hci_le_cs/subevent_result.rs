@@ -11,7 +11,8 @@ use serde_with::serde_as;
 
 pub use crate::event::hci_le_cs::constants::antenna_permutation;
 pub use crate::event::hci_le_cs::constants::cs_params::{MAX_ANTENNA_PATH_COUNT, MAX_NUM_STEPS_REPORTED};
-use crate::event::hci_le_cs::constants::{handle, le_subevent_code, step_mode};
+
+use crate::event::hci_le_cs::constants::{handle, le_subevent_code, step_data_len, step_mode};
 use crate::event::{
     ExtensionSlot, FrequencyCompensation, ParseError, ProcedureAbortReason, ProcedureDoneStatus, ProcedureInfo,
     ReferencePowerLevel, SubeventAbortReason, SubeventDoneStatus, SubeventInfo, ToneQualityIndicator,
@@ -59,6 +60,15 @@ pub struct PacketQuality {
     pub payload_bit_error_count: u8,
 }
 
+impl From<u8> for PacketQuality {
+    fn from(value: u8) -> Self {
+        Self {
+            access_address_check_result: value & 0x0F,
+            payload_bit_error_count: (value >> 4) & 0x0F,
+        }
+    }
+}
+
 /// Optional packet phase correction terms for enhanced packet-based ranging.
 #[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
 #[derive_ReprC]
@@ -68,6 +78,17 @@ pub struct PacketPhaseCorrectionTerms {
     pub first_phase_correction_term: PhaseCorrectionTerm,
     /// Second packet phase correction term.
     pub second_phase_correction_term: PhaseCorrectionTerm,
+}
+
+impl TryFrom<&[u8]> for PacketPhaseCorrectionTerms {
+    type Error = TryFromSliceError;
+
+    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+        Ok(Self {
+            first_phase_correction_term: value[0..3].try_into()?,
+            second_phase_correction_term: value[4..7].try_into()?,
+        })
+    }
 }
 
 /// Packet-level fields shared by time-based ranging modes.
@@ -83,6 +104,19 @@ pub struct RoundTripTimePacketFields {
     pub packet_received_signal_strength_indicator: i8,
     /// Antenna used for the packet measurement.
     pub packet_antenna: u8,
+}
+
+impl TryFrom<&[u8]> for RoundTripTimePacketFields {
+    type Error = TryFromSliceError;
+
+    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+        Ok(Self {
+            packet_quality: value[0].into(),
+            packet_normalized_attack_detector_metric: value[1],
+            packet_received_signal_strength_indicator: value[2] as i8,
+            packet_antenna: value[5],
+        })
+    }
 }
 
 /// Indicates which role-specific timing interpretation is valid.
@@ -379,42 +413,23 @@ impl SubeventResultEvent {
         Self::parse_internal(message, origin)
     }
 
-    /// Length of a basic Mode 1 step payload.
-    const MODE1_LEN: usize = 6;
-    /// Length of a Mode 1 step payload with packet phase correction terms.
-    const MODE1_PBR_RTT_LEN: usize = 14;
-
     /// Return the expected Mode 2 step payload length for an antenna path count.
     fn mode2_len(antenna_path_count: usize) -> usize {
-        4 * antenna_path_count + 5
+        let tone_count = antenna_path_count + 1;
+
+        step_data_len::ANTENNA_PERMUTATION_INDEX
+            + step_data_len::TONE_PHASE_CORRECTION_TERM * tone_count
+            + step_data_len::TONE_QUALITY_INDICATOR * tone_count
     }
 
     /// Return the expected basic Mode 3 step payload length for an antenna path count.
     fn mode3_len(antenna_path_count: usize) -> usize {
-        Self::MODE1_LEN + Self::mode2_len(antenna_path_count)
+        step_data_len::MODE1 + Self::mode2_len(antenna_path_count)
     }
 
     /// Return the expected Mode 3 step payload length with packet phase correction terms.
     fn mode3_pbr_rtt_len(antenna_path_count: usize) -> usize {
-        Self::MODE1_PBR_RTT_LEN + Self::mode2_len(antenna_path_count)
-    }
-
-    /// Parse the packet quality byte shared by packet-based ranging modes.
-    fn parse_packet_quality(quality_byte: u8) -> PacketQuality {
-        PacketQuality {
-            access_address_check_result: quality_byte & 0x0F,
-            payload_bit_error_count: (quality_byte >> 4) & 0x0F,
-        }
-    }
-
-    /// Parse the packet-level fields shared by Mode 1 and Mode 3.
-    fn parse_rtt_packet_fields(step_data: &[u8]) -> Result<RoundTripTimePacketFields, ParseError> {
-        Ok(RoundTripTimePacketFields {
-            packet_quality: Self::parse_packet_quality(step_data[0]),
-            packet_normalized_attack_detector_metric: step_data[1],
-            packet_received_signal_strength_indicator: step_data[2] as i8,
-            packet_antenna: step_data[5],
-        })
+        step_data_len::MODE1_PBR_RTT + Self::mode2_len(antenna_path_count)
     }
 
     /// Parse the role-specific RTT timing field shared by Mode 1 and Mode 3.
@@ -431,30 +446,20 @@ impl SubeventResultEvent {
         })
     }
 
-    /// Parse optional packet phase correction terms present in `PbrRtt` variants.
-    fn parse_packet_phase_correction_terms(step_data: &[u8]) -> Result<PacketPhaseCorrectionTerms, ParseError> {
-        Ok(PacketPhaseCorrectionTerms {
-            first_phase_correction_term: step_data[0..3].try_into()?,
-            second_phase_correction_term: step_data[4..7].try_into()?,
-        })
-    }
-
     /// Parse the grouped tone section shared by Mode 2 and Mode 3.
-    fn parse_tone_section(
-        step_data: &[u8],
-        antenna_path_count: usize,
-        offset: usize,
-    ) -> Result<ToneSection, ParseError> {
+    fn parse_tone_section(step_data: &[u8], antenna_path_count: usize) -> Result<ToneSection, ParseError> {
         let mut tones = ToneSection {
-            antenna_permutation_index: step_data[offset],
+            antenna_permutation_index: step_data[0],
             ..Default::default()
         };
 
         let tone_count = antenna_path_count + 1;
-        let tone_quality_offset = offset + 1 + 3 * tone_count;
+        let tone_quality_offset =
+            step_data_len::ANTENNA_PERMUTATION_INDEX + step_data_len::TONE_PHASE_CORRECTION_TERM * tone_count;
 
         for antenna_path_index in 0..tone_count {
-            let phase_correction_offset = offset + 1 + 3 * antenna_path_index;
+            let phase_correction_offset = step_data_len::ANTENNA_PERMUTATION_INDEX
+                + step_data_len::TONE_PHASE_CORRECTION_TERM * antenna_path_index;
             tones.phase_correction_terms[antenna_path_index] =
                 step_data[phase_correction_offset..phase_correction_offset + 3].try_into()?;
 
@@ -477,25 +482,25 @@ impl SubeventResultEvent {
             ));
         }
 
-        Ok(Self::parse_tone_section(step_data, antenna_path_count, 0)?.into())
+        Ok(Self::parse_tone_section(step_data, antenna_path_count)?.into())
     }
 
     /// Parse one Mode 1 step payload.
     fn parse_mode1_step(step_data: &[u8], origin: Origin) -> Result<Mode1Data, ParseError> {
         let (has_packet_phase_correction_terms, expected_step_data_length) = match step_data.len() {
-            Self::MODE1_LEN => (false, Self::MODE1_LEN),
-            Self::MODE1_PBR_RTT_LEN => (true, Self::MODE1_PBR_RTT_LEN),
+            step_data_len::MODE1 => (false, step_data_len::MODE1),
+            step_data_len::MODE1_PBR_RTT => (true, step_data_len::MODE1_PBR_RTT),
             _ => {
                 return Err(ParseError::InvalidStepDataLength(
                     step_mode::MODE_1,
                     step_data.len(),
-                    Self::MODE1_LEN,
+                    step_data_len::MODE1,
                 ));
             }
         };
 
         let packet_phase_correction_terms = if has_packet_phase_correction_terms {
-            Self::parse_packet_phase_correction_terms(&step_data[6..14])?
+            step_data[6..14].try_into()?
         } else {
             Default::default()
         };
@@ -503,7 +508,7 @@ impl SubeventResultEvent {
         debug_assert_eq!(step_data.len(), expected_step_data_length);
 
         Ok(Mode1Data {
-            packet: Self::parse_rtt_packet_fields(step_data)?,
+            packet: step_data.try_into()?,
             timing: Self::parse_rtt_role_timing(step_data, origin)?,
             packet_phase_correction_terms,
             has_packet_phase_correction_terms,
@@ -512,36 +517,32 @@ impl SubeventResultEvent {
 
     /// Parse one Mode 3 step payload.
     fn parse_mode3_step(step_data: &[u8], origin: Origin, antenna_path_count: usize) -> Result<Mode3Data, ParseError> {
-        let (has_packet_phase_correction_terms, expected_step_data_length, tone_offset) = match step_data.len() {
-            len if len == Self::mode3_len(antenna_path_count) => (false, len, Self::MODE1_LEN),
-            len if len == Self::mode3_pbr_rtt_len(antenna_path_count) => (true, len, Self::MODE1_PBR_RTT_LEN),
-            _ => {
-                return Err(ParseError::InvalidStepDataLength(
-                    step_mode::MODE_3,
-                    step_data.len(),
-                    Self::mode3_len(antenna_path_count),
-                ));
-            }
+        let step_data_length = step_data.len();
+        let basic_len = Self::mode3_len(antenna_path_count);
+        let pbr_rtt_len = Self::mode3_pbr_rtt_len(antenna_path_count);
+
+        let (has_packet_phase_correction_terms, tone_offset) = if step_data_length == basic_len {
+            (false, step_data_len::MODE1)
+        } else if step_data_length == pbr_rtt_len {
+            (true, step_data_len::MODE1_PBR_RTT)
+        } else {
+            return Err(ParseError::InvalidStepDataLength(
+                step_mode::MODE_3,
+                step_data_length,
+                basic_len,
+            ));
         };
 
         let packet_phase_correction_terms = if has_packet_phase_correction_terms {
-            Self::parse_packet_phase_correction_terms(&step_data[6..14])?
+            step_data[6..14].try_into()?
         } else {
             Default::default()
         };
 
-        if step_data.len() != expected_step_data_length {
-            return Err(ParseError::InvalidStepDataLength(
-                step_mode::MODE_3,
-                step_data.len(),
-                expected_step_data_length,
-            ));
-        }
-
         Ok(Mode3Data {
-            packet: Self::parse_rtt_packet_fields(step_data)?,
+            packet: step_data.try_into()?,
             timing: Self::parse_rtt_role_timing(step_data, origin)?,
-            tones: Self::parse_tone_section(step_data, antenna_path_count, tone_offset)?,
+            tones: Self::parse_tone_section(&step_data[tone_offset..], antenna_path_count)?,
             packet_phase_correction_terms,
             has_packet_phase_correction_terms,
         })

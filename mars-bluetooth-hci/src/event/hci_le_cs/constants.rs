@@ -56,6 +56,20 @@ pub mod cs_params {
     pub const MAX_ANTENNA_PATH_COUNT: usize = 4;
 }
 
+/// Field widths used in CS step payloads.
+pub mod step_data_len {
+    /// Length of a basic Mode 1 step payload.
+    pub const MODE1: usize = 6;
+    /// Length of a Mode 1 step payload with packet phase correction terms.
+    pub const MODE1_PBR_RTT: usize = 14;
+    /// Length of the antenna permutation index field in Mode 2 and Mode 3.
+    pub const ANTENNA_PERMUTATION_INDEX: usize = 1;
+    /// Length of one tone phase correction term entry in Mode 2 and Mode 3.
+    pub const TONE_PHASE_CORRECTION_TERM: usize = 3;
+    /// Length of one tone quality indicator entry in Mode 2 and Mode 3.
+    pub const TONE_QUALITY_INDICATOR: usize = 1;
+}
+
 /// Special HCI handle values.
 pub mod handle {
     /// Connection handle for CS test mode.
