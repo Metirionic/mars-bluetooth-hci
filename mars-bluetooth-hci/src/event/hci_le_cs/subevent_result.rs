@@ -11,7 +11,6 @@ use serde_with::serde_as;
 
 pub use crate::event::hci_le_cs::constants::antenna_permutation;
 pub use crate::event::hci_le_cs::constants::cs_params::{MAX_ANTENNA_PATH_COUNT, MAX_NUM_STEPS_REPORTED};
-
 use crate::event::hci_le_cs::constants::{handle, le_subevent_code, step_data_len, step_mode};
 use crate::event::{
     ExtensionSlot, FrequencyCompensation, ParseError, ProcedureAbortReason, ProcedureDoneStatus, ProcedureInfo,
