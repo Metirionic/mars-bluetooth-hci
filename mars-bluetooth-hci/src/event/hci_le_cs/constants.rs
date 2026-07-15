@@ -46,6 +46,8 @@ pub mod step_mode {
     pub const MODE_2: u8 = 0x02;
     /// Step mode 3.
     pub const MODE_3: u8 = 0x03;
+    /// Sentinel marking a step slot as carrying no valid data.
+    pub const MODE_INVALID: u8 = 0xFF;
 }
 
 /// CS procedure parameters.
