@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com), and this project adheres to [Semantic Versioning](https://semver.org).
 
 - - -
+## [mars-bluetooth-hci@0.10.0](https://github.com/Metirionic/mars-bluetooth-hci/compare/084b22f782e0d9fbb7b174de0beb61502b22a591..mars-bluetooth-hci@0.10.0) - 2026-07-15
+#### Features
+- invalid mode - ([084b22f](https://github.com/Metirionic/mars-bluetooth-hci/commit/084b22f782e0d9fbb7b174de0beb61502b22a591)) - Adrian Figueroa
+#### Bug Fixes
+- version strings in docs - ([ecad271](https://github.com/Metirionic/mars-bluetooth-hci/commit/ecad2714ab85769b4e9c6250a7318c1d82032d5e)) - Adrian Figueroa
+
+- - -
+
 ## [mars-bluetooth-hci@0.9.0](https://github.com/Metirionic/mars-bluetooth-hci/compare/caf2398ee278187a702208d86861212660e01440..mars-bluetooth-hci@0.9.0) - 2026-07-14
 #### Features
 - add mode 1 and mode 3 subevent result support - ([e719422](https://github.com/Metirionic/mars-bluetooth-hci/commit/e719422f54cc17351c09b8fa9f88f0af652a5545)) - Johannes Guertler
