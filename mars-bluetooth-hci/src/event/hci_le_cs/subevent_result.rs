@@ -559,6 +559,7 @@ impl SubeventResultEvent {
             let step_data = &message[3 + step_byte_offset..3 + step_byte_offset + step_data_length];
 
             match step_mode {
+                step_mode::MODE_INVALID => {}
                 step_mode::MODE_0 => {}
                 step_mode::MODE_1 => {
                     if matches!(self.origin, Origin::Unknown) {
