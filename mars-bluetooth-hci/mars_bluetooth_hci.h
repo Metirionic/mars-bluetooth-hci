@@ -515,61 +515,6 @@ typedef struct Mode2 {
 } Mode2_t;
 
 /** \brief
- *  Grouped tone fields shared by Mode 2 and Mode 3.
- */
-typedef struct ToneSection {
-    /** \brief
-     *  The selected antenna permutation index.
-     */
-    uint8_t antenna_permutation_index;
-
-    /** \brief
-     *  The phase correction terms for the tone sequence.
-     */
-    PhaseCorrectionTerm_5_array_t phase_correction_terms;
-
-    /** \brief
-     *  The quality indicators for the tone sequence.
-     */
-    ToneQualityIndicator_5_array_t quality_indicators;
-
-    /** \brief
-     *  The selected extension slots for the tone sequence.
-     */
-    ExtensionSlot_5_array_t extension_slots;
-} ToneSection_t;
-
-/** \brief
- *  Compact Mode 3 payload stored once per reported step.
- */
-typedef struct Mode3Data {
-    /** \brief
-     *  Shared packet-level fields.
-     */
-    RoundTripTimePacketFields_t packet;
-
-    /** \brief
-     *  Role-specific RTT timing delta.
-     */
-    RoundTripTimeRoleTiming_t timing;
-
-    /** \brief
-     *  Grouped tone fields.
-     */
-    ToneSection_t tones;
-
-    /** \brief
-     *  Optional packet phase correction terms.
-     */
-    PacketPhaseCorrectionTerms_t packet_phase_correction_terms;
-
-    /** \brief
-     *  If true, `packet_phase_correction_terms` is valid.
-     */
-    bool has_packet_phase_correction_terms;
-} Mode3Data_t;
-
-/** \brief
  *  Mode- and role-specific information.
  *
  *  The payload fields are selected by `kind`.
@@ -585,24 +530,18 @@ typedef struct ModeRoleSpecificInfo {
      *  is [`ModeRoleSpecificInfoKind::Mode1Initiator`]
      *  or [`ModeRoleSpecificInfoKind::Mode1InitiatorPbrRtt`]
      *  or [`ModeRoleSpecificInfoKind::Mode1Reflector`]
-     *  or [`ModeRoleSpecificInfoKind::Mode1ReflectorPbrRtt`].
+     *  or [`ModeRoleSpecificInfoKind::Mode1ReflectorPbrRtt`],
+     *  and also for Mode 3 variants (Mode 3 = Mode 1 + Mode 2 in the spec).
      */
     Mode1Data_t mode1;
 
     /** \brief
-     *  Mode2 data. Only valid when `kind`
-     *  is [`ModeRoleSpecificInfoKind::Mode2`].
+     *  Mode2 data. Valid when `kind`
+     *  is [`ModeRoleSpecificInfoKind::Mode2`],
+     *  and also for Mode 3 variants (the tone fields are populated alongside
+     *  Mode 1 packet fields in `mode1`).
      */
     Mode2_t mode2;
-
-    /** \brief
-     *  Mode3 data. Valid when `kind`
-     *  is [`ModeRoleSpecificInfoKind::Mode3Initiator`]
-     *  or [`ModeRoleSpecificInfoKind::Mode3InitiatorPbrRtt`]
-     *  or [`ModeRoleSpecificInfoKind::Mode3Reflector`]
-     *  or [`ModeRoleSpecificInfoKind::Mode3ReflectorPbrRtt`].
-     */
-    Mode3Data_t mode3;
 } ModeRoleSpecificInfo_t;
 
 /** \brief

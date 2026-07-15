@@ -147,21 +147,6 @@ pub struct RoundTripTimeRoleTiming {
     pub role_specific_timing_value: i16,
 }
 
-/// Grouped tone fields shared by Mode 2 and Mode 3.
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
-#[derive_ReprC]
-#[repr(C)]
-pub struct ToneSection {
-    /// The selected antenna permutation index.
-    pub antenna_permutation_index: u8,
-    /// The phase correction terms for the tone sequence.
-    pub phase_correction_terms: [PhaseCorrectionTerm; MAX_ANTENNA_PATH_COUNT + 1],
-    /// The quality indicators for the tone sequence.
-    pub quality_indicators: [ToneQualityIndicator; MAX_ANTENNA_PATH_COUNT + 1],
-    /// The selected extension slots for the tone sequence.
-    pub extension_slots: [ExtensionSlot; MAX_ANTENNA_PATH_COUNT + 1],
-}
-
 /// Compact Mode 1 payload stored once per reported step.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 #[derive_ReprC]
@@ -178,9 +163,6 @@ pub struct Mode1Data {
 }
 
 /// Content of a Mode2 that is captured in a step.
-// FIXME: `Mode2` currently duplicates the grouped tone fields from `ToneSection`.
-// Keep this stable for downstream consumers for now, but consider collapsing the
-// duplication once the parser, examples, and processing side are aligned.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 #[derive_ReprC]
 #[repr(C)]
@@ -193,17 +175,6 @@ pub struct Mode2 {
     pub quality_indicators: [ToneQualityIndicator; MAX_ANTENNA_PATH_COUNT + 1],
     /// The selected extension slots for the antenna paths.
     pub extension_slots: [ExtensionSlot; MAX_ANTENNA_PATH_COUNT + 1],
-}
-
-impl From<ToneSection> for Mode2 {
-    fn from(value: ToneSection) -> Self {
-        Self {
-            antenna_permutation_index: value.antenna_permutation_index,
-            phase_correction_terms: value.phase_correction_terms,
-            quality_indicators: value.quality_indicators,
-            extension_slots: value.extension_slots,
-        }
-    }
 }
 
 impl Mode2 {
@@ -221,23 +192,6 @@ impl Mode2 {
     pub fn antenna_index(&self, n_ap: usize, path_index: usize) -> Result<usize, crate::constants::Error> {
         Ok(antenna_permutation::lookup(n_ap, self.antenna_permutation_index as usize)?[path_index])
     }
-}
-
-/// Compact Mode 3 payload stored once per reported step.
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
-#[derive_ReprC]
-#[repr(C)]
-pub struct Mode3Data {
-    /// Shared packet-level fields.
-    pub packet: RoundTripTimePacketFields,
-    /// Role-specific RTT timing delta.
-    pub timing: RoundTripTimeRoleTiming,
-    /// Grouped tone fields.
-    pub tones: ToneSection,
-    /// Optional packet phase correction terms.
-    pub packet_phase_correction_terms: PacketPhaseCorrectionTerms,
-    /// If true, `packet_phase_correction_terms` is valid.
-    pub has_packet_phase_correction_terms: bool,
 }
 
 /// Discriminant for [`ModeRoleSpecificInfo`].
@@ -291,17 +245,14 @@ pub struct ModeRoleSpecificInfo {
     /// is [`ModeRoleSpecificInfoKind::Mode1Initiator`]
     /// or [`ModeRoleSpecificInfoKind::Mode1InitiatorPbrRtt`]
     /// or [`ModeRoleSpecificInfoKind::Mode1Reflector`]
-    /// or [`ModeRoleSpecificInfoKind::Mode1ReflectorPbrRtt`].
+    /// or [`ModeRoleSpecificInfoKind::Mode1ReflectorPbrRtt`],
+    /// and also for Mode 3 variants (Mode 3 = Mode 1 + Mode 2 in the spec).
     pub mode1: Mode1Data,
-    /// Mode2 data. Only valid when `kind`
-    ///  is [`ModeRoleSpecificInfoKind::Mode2`].
+    /// Mode2 data. Valid when `kind`
+    ///  is [`ModeRoleSpecificInfoKind::Mode2`],
+    /// and also for Mode 3 variants (the tone fields are populated alongside
+    /// Mode 1 packet fields in `mode1`).
     pub mode2: Mode2,
-    /// Mode3 data. Valid when `kind`
-    /// is [`ModeRoleSpecificInfoKind::Mode3Initiator`]
-    /// or [`ModeRoleSpecificInfoKind::Mode3InitiatorPbrRtt`]
-    /// or [`ModeRoleSpecificInfoKind::Mode3Reflector`]
-    /// or [`ModeRoleSpecificInfoKind::Mode3ReflectorPbrRtt`].
-    pub mode3: Mode3Data,
 }
 
 /// Data that characterizes a step.
@@ -445,9 +396,13 @@ impl SubeventResultEvent {
         })
     }
 
-    /// Parse the grouped tone section shared by Mode 2 and Mode 3.
-    fn parse_tone_section(step_data: &[u8], antenna_path_count: usize) -> Result<ToneSection, ParseError> {
-        let mut tones = ToneSection {
+    /// Parse the Mode 2 tone fields from a byte slice.
+    ///
+    /// Shared by Mode 2 (full step payload) and Mode 3 (trailing tone portion
+    /// after the Mode 1 prefix). Does not validate overall step length — the
+    /// caller is responsible for slicing `step_data` to the correct tone bytes.
+    fn parse_mode2_tones(step_data: &[u8], antenna_path_count: usize) -> Result<Mode2, ParseError> {
+        let mut tones = Mode2 {
             antenna_permutation_index: step_data[0],
             ..Default::default()
         };
@@ -481,7 +436,7 @@ impl SubeventResultEvent {
             ));
         }
 
-        Ok(Self::parse_tone_section(step_data, antenna_path_count)?.into())
+        Ok(Self::parse_mode2_tones(step_data, antenna_path_count)?)
     }
 
     /// Parse one Mode 1 step payload.
@@ -515,15 +470,25 @@ impl SubeventResultEvent {
     }
 
     /// Parse one Mode 3 step payload.
-    fn parse_mode3_step(step_data: &[u8], origin: Origin, antenna_path_count: usize) -> Result<Mode3Data, ParseError> {
+    ///
+    /// Mode 3 is Mode 1 + Mode 2 in the spec, so the payload is a Mode 1 prefix
+    /// followed by the Mode 2 tone fields. This function slices the payload at
+    /// `tone_offset` and delegates to `parse_mode1_step` (for the prefix) and
+    /// `parse_mode2_tones` (for the trailing tones), returning both so the caller
+    /// can populate `info.mode1` and `info.mode2` on the same `Step`.
+    fn parse_mode3_step(
+        step_data: &[u8],
+        origin: Origin,
+        antenna_path_count: usize,
+    ) -> Result<(Mode1Data, Mode2), ParseError> {
         let step_data_length = step_data.len();
         let basic_len = Self::mode3_len(antenna_path_count);
         let pbr_rtt_len = Self::mode3_pbr_rtt_len(antenna_path_count);
 
-        let (has_packet_phase_correction_terms, tone_offset) = if step_data_length == basic_len {
-            (false, step_data_len::MODE1)
+        let tone_offset = if step_data_length == basic_len {
+            step_data_len::MODE1
         } else if step_data_length == pbr_rtt_len {
-            (true, step_data_len::MODE1_PBR_RTT)
+            step_data_len::MODE1_PBR_RTT
         } else {
             return Err(ParseError::InvalidStepDataLength(
                 step_mode::MODE_3,
@@ -532,19 +497,9 @@ impl SubeventResultEvent {
             ));
         };
 
-        let packet_phase_correction_terms = if has_packet_phase_correction_terms {
-            step_data[6..14].try_into()?
-        } else {
-            Default::default()
-        };
-
-        Ok(Mode3Data {
-            packet: step_data.try_into()?,
-            timing: Self::parse_rtt_role_timing(step_data, origin)?,
-            tones: Self::parse_tone_section(&step_data[tone_offset..], antenna_path_count)?,
-            packet_phase_correction_terms,
-            has_packet_phase_correction_terms,
-        })
+        let mode1 = Self::parse_mode1_step(&step_data[..tone_offset], origin)?;
+        let mode2 = Self::parse_mode2_tones(&step_data[tone_offset..], antenna_path_count)?;
+        Ok((mode1, mode2))
     }
 
     /// Push steps from a binary message into the subevent result event.
@@ -597,14 +552,15 @@ impl SubeventResultEvent {
                     if matches!(self.origin, Origin::Unknown) {
                         return Err(ParseError::UnknownOriginForMode(step_mode));
                     }
-                    let mode3 = Self::parse_mode3_step(step_data, self.origin, self.antenna_path_count)?;
+                    // Mode 3 = Mode 1 + Mode 2; both siblings are populated.
+                    let (mode1, mode2) = Self::parse_mode3_step(step_data, self.origin, self.antenna_path_count)?;
                     self.steps[step_index] = Step {
                         mode: step_mode,
                         channel: step_channel,
                         info: ModeRoleSpecificInfo {
-                            kind: self.mode_3_selector(mode3.has_packet_phase_correction_terms),
-                            mode3,
-                            ..Default::default()
+                            kind: self.mode_3_selector(mode1.has_packet_phase_correction_terms),
+                            mode1,
+                            mode2,
                         },
                     };
                     step_index += 1;
@@ -879,6 +835,8 @@ mod tests {
 
     #[test]
     fn test_mode3_step_stays_one_internal_step() {
+        // Mode 3 = Mode 1 + Mode 2: under the collapsed schema, Mode 1 fields
+        // are on info.mode1 and tone fields are on info.mode2.
         let mut step_data = mode1_basic_step_data(0x21, 0x12, 0x34).to_vec();
         step_data.extend_from_slice(&mode2_step_data());
         let message = continue_event(0x03, 0x05, 0x01, &step_data);
@@ -892,24 +850,25 @@ mod tests {
         ));
         assert_eq!(event.steps[1].mode, 0);
 
-        let mode3 = event.steps[0].info.mode3;
-        assert_eq!(mode3.packet.packet_quality.access_address_check_result, 1);
-        assert_eq!(mode3.packet.packet_quality.payload_bit_error_count, 2);
-        assert_eq!(mode3.packet.packet_antenna, 0x02);
+        let mode1 = event.steps[0].info.mode1;
+        let mode2 = event.steps[0].info.mode2;
+        assert_eq!(mode1.packet.packet_quality.access_address_check_result, 1);
+        assert_eq!(mode1.packet.packet_quality.payload_bit_error_count, 2);
+        assert_eq!(mode1.packet.packet_antenna, 0x02);
         assert!(matches!(
-            mode3.timing.kind,
+            mode1.timing.kind,
             RoundTripTimeRoleTimingKind::TimeOfArrivalTimeOfDepartureInitiator
         ));
-        assert_eq!(mode3.tones.antenna_permutation_index, 9);
+        assert_eq!(mode2.antenna_permutation_index, 9);
         let expected_pct = PhaseCorrectionTerm::try_from([0x48, 0x7B, 0x54].as_slice()).unwrap();
-        assert_eq!(mode3.tones.phase_correction_terms[0].i, expected_pct.i);
-        assert_eq!(mode3.tones.phase_correction_terms[0].q, expected_pct.q);
+        assert_eq!(mode2.phase_correction_terms[0].i, expected_pct.i);
+        assert_eq!(mode2.phase_correction_terms[0].q, expected_pct.q);
         assert!(matches!(
-            mode3.tones.quality_indicators[0],
+            mode2.quality_indicators[0],
             ToneQualityIndicator::Medium
         ));
-        assert!(matches!(mode3.tones.extension_slots[0], ExtensionSlot::ExpectedPresent));
-        assert!(!mode3.has_packet_phase_correction_terms);
+        assert!(matches!(mode2.extension_slots[0], ExtensionSlot::ExpectedPresent));
+        assert!(!mode1.has_packet_phase_correction_terms);
     }
 
     #[test]
@@ -973,6 +932,8 @@ mod tests {
 
     #[test]
     fn test_mode3_reflector_basic_is_parsed() {
+        // Mode 3 = Mode 1 + Mode 2: under the collapsed schema, Mode 1 fields
+        // are on info.mode1 and tone fields are on info.mode2.
         let mut step_data = mode1_basic_step_data(0x21, 0x12, 0x34).to_vec();
         step_data.extend_from_slice(&mode2_step_data());
         let message = continue_event(0x03, 0x05, 0x01, &step_data);
@@ -984,29 +945,33 @@ mod tests {
             ModeRoleSpecificInfoKind::Mode3Reflector
         ));
         assert!(matches!(
-            event.steps[0].info.mode3.timing.kind,
+            event.steps[0].info.mode1.timing.kind,
             RoundTripTimeRoleTimingKind::TimeOfDepartureTimeOfArrivalReflector
         ));
     }
 
     #[test]
     fn test_mode3_pbr_rtt_initiator_is_parsed() {
+        // Mode 3 = Mode 1 + Mode 2: under the collapsed schema, Mode 1 fields
+        // are on info.mode1 and tone fields are on info.mode2.
         let mut step_data = mode1_pbr_rtt_step_data(0x21, 0x12, 0x34).to_vec();
         step_data.extend_from_slice(&mode2_step_data());
         let message = continue_event(0x03, 0x05, 0x01, &step_data);
 
         let event = SubeventResultEvent::try_from_with_origin(message.as_slice(), Origin::Initiator).unwrap();
-        let mode3 = event.steps[0].info.mode3;
+        let mode1 = event.steps[0].info.mode1;
 
         assert!(matches!(
             event.steps[0].info.kind,
             ModeRoleSpecificInfoKind::Mode3InitiatorPbrRtt
         ));
-        assert!(mode3.has_packet_phase_correction_terms);
+        assert!(mode1.has_packet_phase_correction_terms);
     }
 
     #[test]
     fn test_mode3_pbr_rtt_reflector_is_parsed() {
+        // Mode 3 = Mode 1 + Mode 2: under the collapsed schema, Mode 1 fields
+        // are on info.mode1 and tone fields are on info.mode2.
         let mut step_data = mode1_pbr_rtt_step_data(0x21, 0x12, 0x34).to_vec();
         step_data.extend_from_slice(&mode2_step_data());
         let message = continue_event(0x03, 0x05, 0x01, &step_data);
@@ -1018,7 +983,7 @@ mod tests {
             ModeRoleSpecificInfoKind::Mode3ReflectorPbrRtt
         ));
         assert!(matches!(
-            event.steps[0].info.mode3.timing.kind,
+            event.steps[0].info.mode1.timing.kind,
             RoundTripTimeRoleTimingKind::TimeOfDepartureTimeOfArrivalReflector
         ));
     }
