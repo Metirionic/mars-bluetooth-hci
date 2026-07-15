@@ -339,7 +339,7 @@ FFI call pattern above is its **initiator serializer module**:
   documents the firmware's internal ranging-data flow and UART mechanism.
 - The `FetchContent` pin is in
   [`initiator/CMakeLists.txt`](https://github.com/Metirionic/mars-cs-nrf54l/blob/main/initiator/CMakeLists.txt)
-  (`GIT_TAG mars-bluetooth-hci@0.8.0`); the pin lives in the firmware, not here.
+  (`GIT_TAG mars-bluetooth-hci@0.9.0`); the pin lives in the firmware, not here.
 
 ## When the header must be regenerated
 
