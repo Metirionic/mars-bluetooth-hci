@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com), and this project adheres to [Semantic Versioning](https://semver.org).
 
 - - -
+## [mars-bluetooth-hci@0.11.0](https://github.com/Metirionic/mars-bluetooth-hci/compare/5382fc402e58a608a9528bd996f1e783f71fd9ec..mars-bluetooth-hci@0.11.0) - 2026-07-16
+#### Features
+- collapse modes - ([5382fc4](https://github.com/Metirionic/mars-bluetooth-hci/commit/5382fc402e58a608a9528bd996f1e783f71fd9ec)) - Adrian Figueroa
+#### Bug Fixes
+- readme snippet - ([ab6b03e](https://github.com/Metirionic/mars-bluetooth-hci/commit/ab6b03ef6d2affc57a81f535bb7147c5dc1dfce7)) - Adrian Figueroa
+- formatting and clippy - ([a9d8be8](https://github.com/Metirionic/mars-bluetooth-hci/commit/a9d8be8865e4e15bca925da61369023e219bdc24)) - Adrian Figueroa
+
+- - -
+
 ## [mars-bluetooth-hci@0.10.0](https://github.com/Metirionic/mars-bluetooth-hci/compare/084b22f782e0d9fbb7b174de0beb61502b22a591..mars-bluetooth-hci@0.10.0) - 2026-07-15
 #### Features
 - invalid mode - ([084b22f](https://github.com/Metirionic/mars-bluetooth-hci/commit/084b22f782e0d9fbb7b174de0beb61502b22a591)) - Adrian Figueroa
