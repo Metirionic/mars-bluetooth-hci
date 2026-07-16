@@ -436,7 +436,7 @@ impl SubeventResultEvent {
             ));
         }
 
-        Ok(Self::parse_mode2_tones(step_data, antenna_path_count)?)
+        Self::parse_mode2_tones(step_data, antenna_path_count)
     }
 
     /// Parse one Mode 1 step payload.
@@ -863,10 +863,7 @@ mod tests {
         let expected_pct = PhaseCorrectionTerm::try_from([0x48, 0x7B, 0x54].as_slice()).unwrap();
         assert_eq!(mode2.phase_correction_terms[0].i, expected_pct.i);
         assert_eq!(mode2.phase_correction_terms[0].q, expected_pct.q);
-        assert!(matches!(
-            mode2.quality_indicators[0],
-            ToneQualityIndicator::Medium
-        ));
+        assert!(matches!(mode2.quality_indicators[0], ToneQualityIndicator::Medium));
         assert!(matches!(mode2.extension_slots[0], ExtensionSlot::ExpectedPresent));
         assert!(!mode1.has_packet_phase_correction_terms);
     }
