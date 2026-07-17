@@ -6,7 +6,7 @@ This document is the detailed, human-facing architecture of `mars-bluetooth-hci`
 
 `mars-bluetooth-hci` is a two-crate Rust workspace — see [ecosystem.md](ecosystem.md) for the three-repo picture and the ecosystem data-flow diagram, which this document does not reproduce. The two crates:
 
-- `mars-bluetooth-hci` (v0.10.0) — the encoder, parser, and serialize-only C FFI for Bluetooth HCI Channel Sounding subevent-result events. Built as both a `lib` (Rust API) and a `staticlib` (`libmars_bluetooth_hci.a`, which is what the firmware links).
+- `mars-bluetooth-hci` (v0.11.0) — the encoder, parser, and serialize-only C FFI for Bluetooth HCI Channel Sounding subevent-result events. Built as both a `lib` (Rust API) and a `staticlib` (`libmars_bluetooth_hci.a`, which is what the firmware links).
 - `mars-common` (v0.2.0) — shared FFI infrastructure and logging dispatch (`SerializedData` buffer, `drop_bin`, allocator/panic bridges, `log`/`defmt`).
 
 The production consumer is `mars-cs-nrf54l` (open nRF54L firmware), which builds the event struct in C and serializes it for UART. The decoder is `mars-ranging-demo` (a public repo with a closed-source GUI), which receives the UART stream and deserializes it. This repo is the **encode side**; the decode side is closed-source, so this repo — not `mars-ranging-demo` — is the authoritative source for the wire-format contract (ADR-0001).
