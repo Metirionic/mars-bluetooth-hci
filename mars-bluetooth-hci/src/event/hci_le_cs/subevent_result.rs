@@ -147,14 +147,24 @@ pub struct RoundTripTimeRoleTiming {
     pub role_specific_timing_value: i16,
 }
 
+/// Bluetooth sentinel for an unavailable Mode 1/3 time difference (`0x8000`).
+const TIME_DIFFERENCE_NOT_AVAILABLE: i16 = i16::MIN;
+
 impl RoundTripTimeRoleTiming {
     /// Convert the raw role-specific timing value to seconds.
     ///
     /// The raw HCI field uses 0.5 ns per least significant bit.
+    /// Returns [`None`] when the timing kind or timing value marks the field as unavailable.
     /// This does not compute a one-way time of flight; initiator and reflector
     /// timing values still need to be paired by the processing layer.
-    pub fn to_seconds(&self) -> f32 {
-        self.role_specific_timing_value as f32 * 0.5e-9
+    pub fn to_seconds(&self) -> Option<f32> {
+        if matches!(self.kind, RoundTripTimeRoleTimingKind::Unavailable)
+            || self.role_specific_timing_value == TIME_DIFFERENCE_NOT_AVAILABLE
+        {
+            None
+        } else {
+            Some(self.role_specific_timing_value as f32 * 0.5e-9)
+        }
     }
 }
 
@@ -824,7 +834,31 @@ mod tests {
             RoundTripTimeRoleTimingKind::TimeOfArrivalTimeOfDepartureInitiator
         ));
         assert_eq!(mode1.timing.role_specific_timing_value, 0x3412);
+        assert_eq!(mode1.timing.to_seconds(), Some(0x3412_u16 as f32 * 0.5e-9));
         assert!(!mode1.has_packet_phase_correction_terms);
+    }
+
+    #[test]
+    fn test_rtt_timing_not_available_sentinel_has_no_seconds_value() {
+        let message = continue_event(0x01, 0x05, 0x01, &mode1_basic_step_data(0x21, 0x00, 0x80));
+
+        let event = SubeventResultEvent::try_from_with_origin(message.as_slice(), Origin::Initiator).unwrap();
+        let timing = event.steps[0].info.mode1.timing;
+
+        assert!(matches!(
+            timing.kind,
+            RoundTripTimeRoleTimingKind::TimeOfArrivalTimeOfDepartureInitiator
+        ));
+        assert_eq!(timing.role_specific_timing_value, i16::MIN);
+        assert_eq!(timing.to_seconds(), None);
+    }
+
+    #[test]
+    fn test_rtt_unavailable_timing_kind_has_no_seconds_value() {
+        let timing = super::RoundTripTimeRoleTiming::default();
+
+        assert!(matches!(timing.kind, RoundTripTimeRoleTimingKind::Unavailable));
+        assert_eq!(timing.to_seconds(), None);
     }
 
     #[test]
