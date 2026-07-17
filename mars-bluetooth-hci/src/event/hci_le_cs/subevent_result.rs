@@ -147,6 +147,17 @@ pub struct RoundTripTimeRoleTiming {
     pub role_specific_timing_value: i16,
 }
 
+impl RoundTripTimeRoleTiming {
+    /// Convert the raw role-specific timing value to seconds.
+    ///
+    /// The raw HCI field uses 0.5 ns per least significant bit.
+    /// This does not compute a one-way time of flight; initiator and reflector
+    /// timing values still need to be paired by the processing layer.
+    pub fn to_seconds(&self) -> f32 {
+        self.role_specific_timing_value as f32 * 0.5e-9
+    }
+}
+
 /// Compact Mode 1 payload stored once per reported step.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 #[derive_ReprC]
