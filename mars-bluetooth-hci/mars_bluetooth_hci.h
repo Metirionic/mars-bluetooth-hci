@@ -210,15 +210,8 @@ SubeventAbortReason_t;
 /** \brief
  *  Discriminant for [`ModeRoleSpecificInfo`].
  *
- *  # Step-mode support limitation
- *
- *  Only [`ModeRoleSpecificInfoKind::Mode2`] is populated by the parser: [`Mode2`]
- *  step data is decoded in [`SubeventResultEvent`]'s parse path. Mode 0 is
- *  recognized but carries no step data (a no-op), and Mode 1 / Mode 3 step inputs
- *  return [`ParseError::InvalidModeType`]. The Mode 1 and Mode 3 variants here
- *  exist for ABI completeness so the C enum stays forward-compatible. Implementing
- *  the remaining modes is tracked in
- *  <https://github.com/Metironic/mars-bluetooth-hci/issues/9>.
+ *  The parser populates Mode 1, Mode 2, and Mode 3 variants. Mode 0 is
+ *  recognized but carries no role-specific step data.
  */
 /** \remark Has the same ABI as `uint8_t` **/
 #ifdef DOXYGEN
@@ -230,39 +223,39 @@ enum ModeRoleSpecificInfoKind {
      */
     MODE_ROLE_SPECIFIC_INFO_KIND_MODE0_REFLECTOR,
     /** \brief
-     *  Mode 1, initiator role. Not populated by the parser.
+     *  Mode 1, initiator role.
      */
     MODE_ROLE_SPECIFIC_INFO_KIND_MODE1_INITIATOR,
     /** \brief
-     *  Mode 1, initiator role, with PBR and RTT measurements. Not populated by the parser.
+     *  Mode 1, initiator role, with PBR and RTT measurements.
      */
     MODE_ROLE_SPECIFIC_INFO_KIND_MODE1_INITIATOR_PBR_RTT,
     /** \brief
-     *  Mode 1, reflector role. Not populated by the parser.
+     *  Mode 1, reflector role.
      */
     MODE_ROLE_SPECIFIC_INFO_KIND_MODE1_REFLECTOR,
     /** \brief
-     *  Mode 1, reflector role, with PBR and RTT measurements. Not populated by the parser.
+     *  Mode 1, reflector role, with PBR and RTT measurements.
      */
     MODE_ROLE_SPECIFIC_INFO_KIND_MODE1_REFLECTOR_PBR_RTT,
     /** \brief
-     *  Mode 2. The only step mode populated by the parser (see [`Mode2`]).
+     *  Mode 2 (see [`Mode2`]).
      */
     MODE_ROLE_SPECIFIC_INFO_KIND_MODE2,
     /** \brief
-     *  Mode 3, initiator role. Not populated by the parser.
+     *  Mode 3, initiator role.
      */
     MODE_ROLE_SPECIFIC_INFO_KIND_MODE3_INITIATOR,
     /** \brief
-     *  Mode 3, initiator role, with PBR and RTT measurements. Not populated by the parser.
+     *  Mode 3, initiator role, with PBR and RTT measurements.
      */
     MODE_ROLE_SPECIFIC_INFO_KIND_MODE3_INITIATOR_PBR_RTT,
     /** \brief
-     *  Mode 3, reflector role. Not populated by the parser.
+     *  Mode 3, reflector role.
      */
     MODE_ROLE_SPECIFIC_INFO_KIND_MODE3_REFLECTOR,
     /** \brief
-     *  Mode 3, reflector role, with PBR and RTT measurements. Not populated by the parser.
+     *  Mode 3, reflector role, with PBR and RTT measurements.
      */
     MODE_ROLE_SPECIFIC_INFO_KIND_MODE3_REFLECTOR_PBR_RTT,
 }
