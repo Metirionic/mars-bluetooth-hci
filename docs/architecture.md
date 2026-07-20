@@ -116,7 +116,7 @@ sequenceDiagram
 ## Known limitations
 
 - **Identity fields are caller-set by design.** The parser (`impl TryFrom<&[u8]> for SubeventResultEvent`, `subevent_result.rs:324`) populates every field it can decode from the HCI bytes but leaves `origin`, `local_mac`, and `peer_mac` at their defaults (`Origin::Unknown` / `0`) — the raw subevent bytes do not carry node identity. The caller fills them from out-of-band context. In Path B the file-reader helper `read_file` (`hci_file_reader.rs:43`) sets `origin` from the vendor text format's `requester`/`reflector` label after parsing; in Path A the firmware sets all three directly in C before calling `serialize_subevent_result_event`. This is intentional, not a parser bug.
-- **Only Mode 2 step data is decoded.** `push_steps` (`subevent_result.rs:239-288`) fully decodes `MODE_2` step data, recognizes `MODE_0` but carries no step data from it (a no-op), and returns `ParseError::InvalidModeType` for `MODE_1` and `MODE_3`. The `ModeRoleSpecificInfoKind` `#[repr(u8)]` enum nonetheless enumerates every mode/role variant so the C enum in the generated header stays forward-compatible — those variants exist for ABI completeness, not because the parser populates them. Implementing the remaining modes is tracked in #9.
+- **Step-mode decoding.** `push_steps` decodes Mode 1, Mode 2, and Mode 3 step data. Mode 1 and Mode 3 require a known `Origin`, because their role-specific timing field is interpreted as `ToA_ToD_Initiator` or `ToD_ToA_Reflector`. Mode 0 is recognized but carries no role-specific step data. Mode 3 populates both `ModeRoleSpecificInfo.mode1` and `ModeRoleSpecificInfo.mode2`.
 
 ## Related documents
 

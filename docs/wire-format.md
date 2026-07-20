@@ -312,10 +312,9 @@ A particularly subtle case: `ModeRoleSpecificInfoKind::Mode2` is declaration ind
 its wire value is `0x05` (`subevent_result.rs:97-119`). This is **distinct from** the HCI
 constant `step_mode::MODE_2 = 0x02` (`mars-bluetooth-hci/src/event/hci_le_cs/constants.rs:46`), which is the raw value that fills the
 `Step.mode: u8` field. Both values appear in the same `Step` struct — `mode` = `0x02` (a raw
-`u8`) followed by `info.kind` = `0x05` (the enum tag) — and must not be conflated. (The
-`ModeRoleSpecificInfoKind` enum enumerates every mode/role variant for C-ABI forward
-compatibility; only `Mode2` is populated by the parser today — see
-[architecture.md](architecture.md) §Known limitations and issue #9.)
+`u8`) followed by `info.kind` = `0x05` (the enum tag) — and must not be conflated. The
+parser populates Mode 1, Mode 2, and Mode 3 variants. Mode 3 stores packet and role-specific
+timing fields in `mode1`, and tone fields in `mode2`.
 
 ## Versioning and compatibility
 

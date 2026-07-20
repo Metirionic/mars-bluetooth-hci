@@ -16,20 +16,26 @@ Part of the [mars-bluetooth-hci](https://github.com/Metirionic/mars-bluetooth-hc
 - **HCI_LE_CS_Config_Complete** (`0x31`) — CS procedure configuration metadata
 - **HCI_LE_CS_Subevent_Result_Continue** (`0x32`) — Continuation with measurement data
 
-The parsed data includes Mode2 step data with phase correction terms (I/Q), tone quality indicators, extension slots, and antenna permutation tables per the Bluetooth CS specification (Vol 6, Part H).
+The parsed data includes Mode 1 packet and role-specific timing data, Mode 2 phase correction
+terms (I/Q), tone quality indicators, extension slots, and antenna permutation tables, and Mode
+3's combined Mode 1 and Mode 2 data per the Bluetooth CS specification (Vol 6, Part H).
 
 ### Key types
 
 | Type | Description |
 |------|-------------|
 | [`SubeventResultEvent`] | Top-level parsed event with connection handle, steps, and metadata |
-| [`Mode2`] | Mode2 step data: antenna permutation, phase correction, quality indicators |
+| [`Mode1Data`] | Mode 1 packet fields, role-specific timing, and optional packet PCTs |
+| [`RoundTripTimeRoleTiming`] | Raw role-specific timing; `to_seconds()` converts units but does not calculate distance |
+| [`Mode2`] | Mode 2 tone data: antenna permutation, phase correction, and quality indicators |
 | [`PhaseCorrectionTerm`] | I/Q components of a phase correction term |
 | [`ToneQualityIndicator`] | High / Medium / Low / Unavailable quality rating |
 | [`InitialMeta`] | Metadata from the first subevent (procedure counter, frequency compensation, reference power) |
 | [`Origin`] | Initiator / Reflector / Unknown data origin |
 
 [`SubeventResultEvent`]: src/event/hci_le_cs/subevent_result.rs
+[`Mode1Data`]: src/event/hci_le_cs/subevent_result.rs
+[`RoundTripTimeRoleTiming`]: src/event/hci_le_cs/subevent_result.rs
 [`Mode2`]: src/event/hci_le_cs/subevent_result.rs
 [`PhaseCorrectionTerm`]: src/event/hci_le_cs/subevent_result.rs
 [`ToneQualityIndicator`]: src/event/mod.rs
