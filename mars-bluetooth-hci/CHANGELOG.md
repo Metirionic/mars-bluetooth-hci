@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com), and this project adheres to [Semantic Versioning](https://semver.org).
 
 - - -
+## [mars-bluetooth-hci@0.13.0](https://github.com/Metirionic/mars-bluetooth-hci/compare/430f88b5c4ba82a103124696e7d18437f6b364ab..mars-bluetooth-hci@0.13.0) - 2026-08-14
+#### Features
+- populate Mode 0 steps from CS subevent results - ([430f88b](https://github.com/Metirionic/mars-bluetooth-hci/commit/430f88b5c4ba82a103124696e7d18437f6b364ab)) - atti, Claude
+#### Documentation
+- sync stale version literals to 0.12.0 - ([170be19](https://github.com/Metirionic/mars-bluetooth-hci/commit/170be19818f784e40c2839082e012620d8be5042)) - atti, Claude
+
+- - -
+
 ## [mars-bluetooth-hci@0.12.0](https://github.com/Metirionic/mars-bluetooth-hci/compare/ea0c23e7e12fa11fdd26127bfb42bad611392583..mars-bluetooth-hci@0.12.0) - 2026-07-21
 #### Features
 - add RTT conversion to seconds - ([ea0c23e](https://github.com/Metirionic/mars-bluetooth-hci/commit/ea0c23e7e12fa11fdd26127bfb42bad611392583)) - Johannes Guertler
