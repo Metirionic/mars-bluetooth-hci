@@ -60,6 +60,10 @@ pub mod cs_params {
 
 /// Field widths used in CS step payloads.
 pub mod step_data_len {
+    /// Length of a Mode 0 reflector step payload.
+    pub const MODE0_REFLECTOR: usize = 4;
+    /// Length of a Mode 0 initiator step payload.
+    pub const MODE0_INITIATOR: usize = 5;
     /// Length of a basic Mode 1 step payload.
     pub const MODE1: usize = 6;
     /// Length of a Mode 1 step payload with packet phase correction terms.

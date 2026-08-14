@@ -193,7 +193,7 @@ repo — is the authoritative contract.
 ### SubeventResultEvent (tag 0x00)
 
 The payload is the `SubeventResultEvent` struct
-(`mars-bluetooth-hci/src/event/hci_le_cs/subevent_result.rs:184-235`), serialized as its fields
+(`mars-bluetooth-hci/src/event/hci_le_cs/subevent_result.rs:366-413`), serialized as its fields
 concatenated in declaration order (no struct header). The 15 top-level fields, in wire order:
 
 | # | Field | Type | Encoding note |
@@ -214,9 +214,10 @@ concatenated in declaration order (no struct header). The 15 top-level fields, i
 | 14 | `initial_meta` | `InitialMeta` (struct) | fields concatenated in declaration order |
 | 15 | `has_initial_meta` | `bool` | 1 byte |
 
-For the **full nested field-level layout** of `Step`, `ModeRoleSpecificInfo`, `Mode2`,
-`PhaseCorrectionTerm`, `InitialMeta`, `FrequencyCompensation`, and `ReferencePowerLevel`, see
-the generated C header [`mars-bluetooth-hci/mars_bluetooth_hci.h`](../mars-bluetooth-hci/mars_bluetooth_hci.h)
+For the **full nested field-level layout** of `Step`, `ModeRoleSpecificInfo`, `Mode0Data`,
+`Mode2`, `PhaseCorrectionTerm`, `InitialMeta`, `FrequencyCompensation`, and
+`ReferencePowerLevel`, see the generated C header
+[`mars-bluetooth-hci/mars_bluetooth_hci.h`](../mars-bluetooth-hci/mars_bluetooth_hci.h)
 (`SubeventResultEvent_t` and the types it references). The header is the canonical source for
 field **order** and field **types**, which match the postcard declaration order.
 
@@ -267,7 +268,7 @@ serde serializes a fixed-size array through `serialize_tuple`, and postcard's
 choice that governs arrays.) The two array sites in this format therefore encode identically:
 
 - **`steps: [Step; 160]`** carries `#[serde_as(as = "[_; MAX_NUM_STEPS_REPORTED]")]`
-  (`subevent_result.rs:228`; `MAX_NUM_STEPS_REPORTED = 160`,
+  (`subevent_result.rs:406`; `MAX_NUM_STEPS_REPORTED = 160`,
   `mars-bluetooth-hci/src/event/hci_le_cs/constants.rs:54`). serde's built-in `[T; N]`
   `Serialize` impl only covers up to 32 elements, so the 160-element array is serialized
   through the `serde_with` `[_; N]` Array adapter, which routes through `serialize_tuple`
@@ -275,9 +276,9 @@ choice that governs arrays.) The two array sites in this format therefore encode
   length prefix.
 - **`Mode2`'s three arrays** — `phase_correction_terms: [PhaseCorrectionTerm; 5]`,
   `quality_indicators: [ToneQualityIndicator; 5]`, and `extension_slots: [ExtensionSlot; 5]`
-  (`subevent_result.rs:59-63`; `MAX_ANTENNA_PATH_COUNT + 1 = 5`,
+  (`subevent_result.rs:227-231`; `MAX_ANTENNA_PATH_COUNT + 1 = 5`,
   `mars-bluetooth-hci/src/event/hci_le_cs/constants.rs:56`) — have **no** `#[serde_as]` (the
-  `Mode2` struct at `subevent_result.rs:52-64` does not declare one). They take serde's
+  `Mode2` struct at `subevent_result.rs:223-232` does not declare one). They take serde's
   built-in `[T; N]` path (5 ≤ 32), which is also `serialize_tuple`, so each is emitted as 5
   elements back-to-back with no length prefix.
 
@@ -309,12 +310,16 @@ for `Aborted`/`Reserved`. The same declaration-order rule applies to `Origin`,
 `ModeRoleSpecificInfoKind`.
 
 A particularly subtle case: `ModeRoleSpecificInfoKind::Mode2` is declaration index **5**, so
-its wire value is `0x05` (`subevent_result.rs:97-119`). This is **distinct from** the HCI
+its wire value is `0x05` (`subevent_result.rs:257-290`). This is **distinct from** the HCI
 constant `step_mode::MODE_2 = 0x02` (`mars-bluetooth-hci/src/event/hci_le_cs/constants.rs:46`), which is the raw value that fills the
 `Step.mode: u8` field. Both values appear in the same `Step` struct — `mode` = `0x02` (a raw
-`u8`) followed by `info.kind` = `0x05` (the enum tag) — and must not be conflated. The
-parser populates Mode 1, Mode 2, and Mode 3 variants. Mode 3 stores packet and role-specific
-timing fields in `mode1`, and tone fields in `mode2`.
+`u8`) followed by `info.kind` = `0x05` (the enum tag) — and must not be conflated. The same
+trap applies to the appended `Mode0Initiator` variant: it is declaration index **10**, so its
+wire value is `0x0A` — distinct from `step_mode::MODE_0 = 0x00`
+(`mars-bluetooth-hci/src/event/hci_le_cs/constants.rs:42`). The
+parser populates Mode 0, Mode 1, Mode 2, and Mode 3 variants. Mode 0 stores packet fields and
+the measured frequency offset in `mode0`; Mode 3 stores packet and role-specific timing
+fields in `mode1`, and tone fields in `mode2`.
 
 ## Versioning and compatibility
 

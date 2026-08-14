@@ -168,6 +168,39 @@ impl RoundTripTimeRoleTiming {
     }
 }
 
+/// Compact Mode 0 payload stored once per reported step.
+///
+/// Mode 0 steps exchange a known CS sync sequence to calibrate the frequency
+/// offset between the initiator and reflector PLLs. The reflector role
+/// carries no frequency offset; the initiator role adds the measured offset.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[derive_ReprC]
+#[repr(C)]
+pub struct Mode0Data {
+    /// Decoded packet quality fields.
+    pub packet_quality: PacketQuality,
+    /// Received signal strength indicator for the packet.
+    pub packet_received_signal_strength_indicator: i8,
+    /// Antenna used for the packet measurement.
+    pub packet_antenna: u8,
+    /// Measured frequency offset, 0.01 ppm per least significant bit.
+    ///
+    /// Present for the initiator role only; left at `0` for the reflector
+    /// role, which carries no offset on the wire.
+    pub measured_freq_offset: u16,
+}
+
+impl Mode0Data {
+    /// Convert the raw measured frequency offset to parts per million.
+    ///
+    /// The raw HCI field is a 15-bit unsigned value with 0.01 ppm per least
+    /// significant bit; the top bit is masked off per the BlueZ reference
+    /// decoder.
+    pub fn to_ppm(&self) -> f32 {
+        (self.measured_freq_offset & 0x7FFF) as f32 * 0.01
+    }
+}
+
 /// Compact Mode 1 payload stored once per reported step.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 #[derive_ReprC]
@@ -217,13 +250,12 @@ impl Mode2 {
 
 /// Discriminant for [`ModeRoleSpecificInfo`].
 ///
-/// The parser populates Mode 1, Mode 2, and Mode 3 variants. Mode 0 is
-/// recognized but carries no role-specific step data.
+/// The parser populates Mode 0, Mode 1, Mode 2, and Mode 3 variants.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[derive_ReprC]
 #[repr(u8)]
 pub enum ModeRoleSpecificInfoKind {
-    /// Mode 0, reflector role. Recognized by the parser but carries no step data.
+    /// Mode 0, reflector role.
     Mode0Reflector,
     /// Mode 1, initiator role.
     Mode1Initiator,
@@ -244,6 +276,11 @@ pub enum ModeRoleSpecificInfoKind {
     Mode3Reflector,
     /// Mode 3, reflector role, with PBR and RTT measurements.
     Mode3ReflectorPbrRtt,
+    /// Mode 0, initiator role.
+    ///
+    /// Appended at the end to preserve the existing wire values of the
+    /// variants above.
+    Mode0Initiator,
 }
 
 /// Mode- and role-specific information.
@@ -255,6 +292,10 @@ pub enum ModeRoleSpecificInfoKind {
 pub struct ModeRoleSpecificInfo {
     /// The kind of mode- and role-specific information.
     pub kind: ModeRoleSpecificInfoKind,
+    /// Mode0 data. Valid when `kind`
+    /// is [`ModeRoleSpecificInfoKind::Mode0Reflector`]
+    /// or [`ModeRoleSpecificInfoKind::Mode0Initiator`].
+    pub mode0: Mode0Data,
     /// Mode1 data. Valid when `kind`
     /// is [`ModeRoleSpecificInfoKind::Mode1Initiator`]
     /// or [`ModeRoleSpecificInfoKind::Mode1InitiatorPbrRtt`]
@@ -453,6 +494,36 @@ impl SubeventResultEvent {
         Self::parse_mode2_tones(step_data, antenna_path_count)
     }
 
+    /// Parse one Mode 0 step payload.
+    ///
+    /// Mode 0 step data is 4 bytes for the reflector role (packet quality,
+    /// RSSI, antenna) and 5 bytes for the initiator role (plus the measured
+    /// frequency offset). The step-data length is the authoritative role
+    /// indicator; no `origin` is required.
+    fn parse_mode0_step(step_data: &[u8]) -> Result<Mode0Data, ParseError> {
+        if !matches!(
+            step_data.len(),
+            step_data_len::MODE0_REFLECTOR | step_data_len::MODE0_INITIATOR
+        ) {
+            return Err(ParseError::InvalidStepDataLength(
+                step_mode::MODE_0,
+                step_data.len(),
+                step_data_len::MODE0_REFLECTOR,
+            ));
+        }
+
+        Ok(Mode0Data {
+            packet_quality: step_data[0].into(),
+            packet_received_signal_strength_indicator: step_data[1] as i8,
+            packet_antenna: step_data[2],
+            measured_freq_offset: if step_data.len() == step_data_len::MODE0_INITIATOR {
+                u16::from_le_bytes(step_data[3..5].try_into()?)
+            } else {
+                0
+            },
+        })
+    }
+
     /// Parse one Mode 1 step payload.
     fn parse_mode1_step(step_data: &[u8], origin: Origin) -> Result<Mode1Data, ParseError> {
         let (has_packet_phase_correction_terms, expected_step_data_length) = match step_data.len() {
@@ -529,7 +600,23 @@ impl SubeventResultEvent {
 
             match step_mode {
                 step_mode::MODE_INVALID => {}
-                step_mode::MODE_0 => {}
+                step_mode::MODE_0 => {
+                    let mode0 = Self::parse_mode0_step(step_data)?;
+                    self.steps[step_index] = Step {
+                        mode: step_mode,
+                        channel: step_channel,
+                        info: ModeRoleSpecificInfo {
+                            kind: if step_data.len() == step_data_len::MODE0_INITIATOR {
+                                ModeRoleSpecificInfoKind::Mode0Initiator
+                            } else {
+                                ModeRoleSpecificInfoKind::Mode0Reflector
+                            },
+                            mode0,
+                            ..Default::default()
+                        },
+                    };
+                    step_index += 1;
+                }
                 step_mode::MODE_1 => {
                     if matches!(self.origin, Origin::Unknown) {
                         return Err(ParseError::UnknownOriginForMode(step_mode));
@@ -575,6 +662,7 @@ impl SubeventResultEvent {
                             kind: self.mode_3_selector(mode1.has_packet_phase_correction_terms),
                             mode1,
                             mode2,
+                            ..Default::default()
                         },
                     };
                     step_index += 1;
@@ -771,6 +859,14 @@ mod tests {
         [0x09, 0x48, 0x7B, 0x54, 0x00, 0x00, 0x00, 0x21, 0x03]
     }
 
+    fn mode0_reflector_step_data() -> [u8; 4] {
+        [0xA2, 0x34, 0x02, 0x00]
+    }
+
+    fn mode0_initiator_step_data(freq_lo: u8, freq_hi: u8) -> [u8; 5] {
+        [0xA2, 0x34, 0x02, freq_lo, freq_hi]
+    }
+
     #[test]
     fn test_pct() {
         let bin = [0x48, 0x7B, 0x54];
@@ -904,6 +1000,81 @@ mod tests {
         assert!(matches!(mode2.quality_indicators[0], ToneQualityIndicator::Medium));
         assert!(matches!(mode2.extension_slots[0], ExtensionSlot::ExpectedPresent));
         assert!(!mode1.has_packet_phase_correction_terms);
+    }
+
+    #[test]
+    fn test_mode0_reflector_step_is_parsed() {
+        let message = continue_event(0x00, 0x05, 0x01, &mode0_reflector_step_data());
+
+        let event = SubeventResultEvent::try_from(message.as_slice()).unwrap();
+
+        assert_eq!(event.step_count, 1);
+        assert!(matches!(
+            event.steps[0].info.kind,
+            ModeRoleSpecificInfoKind::Mode0Reflector
+        ));
+        assert_eq!(event.steps[1].mode, 0);
+
+        let mode0 = event.steps[0].info.mode0;
+        assert_eq!(mode0.packet_quality.access_address_check_result, 0x02);
+        assert_eq!(mode0.packet_quality.payload_bit_error_count, 0x0A);
+        assert_eq!(mode0.packet_received_signal_strength_indicator, 0x34_i8);
+        assert_eq!(mode0.packet_antenna, 0x02);
+        assert_eq!(mode0.measured_freq_offset, 0);
+        assert_eq!(mode0.to_ppm(), 0.0);
+    }
+
+    #[test]
+    fn test_mode0_initiator_step_is_parsed() {
+        // 150 LSB = 1.5 ppm (BlueZ doc example).
+        let message = continue_event(0x00, 0x05, 0x01, &mode0_initiator_step_data(0x96, 0x00));
+
+        let event = SubeventResultEvent::try_from(message.as_slice()).unwrap();
+
+        assert!(matches!(
+            event.steps[0].info.kind,
+            ModeRoleSpecificInfoKind::Mode0Initiator
+        ));
+
+        let mode0 = event.steps[0].info.mode0;
+        assert_eq!(mode0.measured_freq_offset, 150);
+        assert_eq!(mode0.to_ppm(), 1.5);
+    }
+
+    #[test]
+    fn test_mode0_to_ppm_masks_top_bit() {
+        // The top bit is masked off per the BlueZ reference decoder.
+        let message = continue_event(0x00, 0x05, 0x01, &mode0_initiator_step_data(0x96, 0x80));
+
+        let event = SubeventResultEvent::try_from(message.as_slice()).unwrap();
+
+        let mode0 = event.steps[0].info.mode0;
+        assert_eq!(mode0.measured_freq_offset, 0x8096);
+        assert_eq!(mode0.to_ppm(), 1.5);
+    }
+
+    #[test]
+    fn test_mode0_unknown_origin_is_ok() {
+        // Mode 0 has no origin requirement: the role comes from the
+        // step-data length, so parsing with an unknown origin succeeds.
+        let message = continue_event(0x00, 0x05, 0x01, &mode0_initiator_step_data(0x96, 0x00));
+
+        let event = SubeventResultEvent::try_from(message.as_slice()).unwrap();
+
+        assert!(matches!(event.origin, Origin::Unknown));
+        assert!(matches!(
+            event.steps[0].info.kind,
+            ModeRoleSpecificInfoKind::Mode0Initiator
+        ));
+    }
+
+    #[test]
+    fn test_mode0_wrong_length_is_rejected() {
+        let bad_step_data = [0xA2, 0x34, 0x02];
+        let message = continue_event(0x00, 0x05, 0x01, &bad_step_data);
+
+        let error = SubeventResultEvent::try_from(message.as_slice()).unwrap_err();
+        assert!(matches!(error, ParseError::InvalidStepDataLength(0x00, 3, 4)));
     }
 
     #[test]
