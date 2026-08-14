@@ -210,8 +210,7 @@ SubeventAbortReason_t;
 /** \brief
  *  Discriminant for [`ModeRoleSpecificInfo`].
  *
- *  The parser populates Mode 1, Mode 2, and Mode 3 variants. Mode 0 is
- *  recognized but carries no role-specific step data.
+ *  The parser populates Mode 0, Mode 1, Mode 2, and Mode 3 variants.
  */
 /** \remark Has the same ABI as `uint8_t` **/
 #ifdef DOXYGEN
@@ -219,7 +218,7 @@ typedef
 #endif
 enum ModeRoleSpecificInfoKind {
     /** \brief
-     *  Mode 0, reflector role. Recognized by the parser but carries no step data.
+     *  Mode 0, reflector role.
      */
     MODE_ROLE_SPECIFIC_INFO_KIND_MODE0_REFLECTOR,
     /** \brief
@@ -258,6 +257,13 @@ enum ModeRoleSpecificInfoKind {
      *  Mode 3, reflector role, with PBR and RTT measurements.
      */
     MODE_ROLE_SPECIFIC_INFO_KIND_MODE3_REFLECTOR_PBR_RTT,
+    /** \brief
+     *  Mode 0, initiator role.
+     *
+     *  Appended at the end to preserve the existing wire values of the
+     *  variants above.
+     */
+    MODE_ROLE_SPECIFIC_INFO_KIND_MODE0_INITIATOR,
 }
 #ifndef DOXYGEN
 ; typedef uint8_t
@@ -278,6 +284,38 @@ typedef struct PacketQuality {
      */
     uint8_t payload_bit_error_count;
 } PacketQuality_t;
+
+/** \brief
+ *  Compact Mode 0 payload stored once per reported step.
+ *
+ *  Mode 0 steps exchange a known CS sync sequence to calibrate the frequency
+ *  offset between the initiator and reflector PLLs. The reflector role
+ *  carries no frequency offset; the initiator role adds the measured offset.
+ */
+typedef struct Mode0Data {
+    /** \brief
+     *  Decoded packet quality fields.
+     */
+    PacketQuality_t packet_quality;
+
+    /** \brief
+     *  Received signal strength indicator for the packet.
+     */
+    int8_t packet_received_signal_strength_indicator;
+
+    /** \brief
+     *  Antenna used for the packet measurement.
+     */
+    uint8_t packet_antenna;
+
+    /** \brief
+     *  Measured frequency offset, 0.01 ppm per least significant bit.
+     *
+     *  Present for the initiator role only; left at `0` for the reflector
+     *  role, which carries no offset on the wire.
+     */
+    uint16_t measured_freq_offset;
+} Mode0Data_t;
 
 /** \brief
  *  Packet-level fields shared by time-based ranging modes.
@@ -517,6 +555,13 @@ typedef struct ModeRoleSpecificInfo {
      *  The kind of mode- and role-specific information.
      */
     ModeRoleSpecificInfoKind_t kind;
+
+    /** \brief
+     *  Mode0 data. Valid when `kind`
+     *  is [`ModeRoleSpecificInfoKind::Mode0Reflector`]
+     *  or [`ModeRoleSpecificInfoKind::Mode0Initiator`].
+     */
+    Mode0Data_t mode0;
 
     /** \brief
      *  Mode1 data. Valid when `kind`
