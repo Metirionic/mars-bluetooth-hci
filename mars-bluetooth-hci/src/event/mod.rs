@@ -65,7 +65,25 @@ impl TryFrom<FrequencyCompensation> for f32 {
             return Err(ParseError::RoleNotInitiator);
         }
 
-        Ok(value.value as i16 as f32 / 100.0)
+        Ok(sign_extend_15(value.value) as f32 / 100.0)
+    }
+}
+
+/// Sign-extend a 15-bit two's-complement value to [`i16`].
+///
+/// The Channel Sounding frequency-offset fields — `Frequency_Compensation`
+/// (subevent-result header) and Mode 0 `Measured_Freq_Offset` (step data) —
+/// are 15-bit signed values in a 16-bit container: bit 15 is reserved and
+/// bit 14 is the sign bit (Bluetooth Core Spec, Vol 4, Part E, §7.7.65.44).
+/// The 16-bit value `0xC000` is a separate "not available" sentinel that the
+/// caller must reject before calling this. Sign-extends from bit 14 — the
+/// plain `as i16` cast (sign bit 15) is wrong for negative offsets.
+pub(crate) fn sign_extend_15(raw: u16) -> i16 {
+    let value = raw & 0x7FFF;
+    if value & 0x4000 != 0 {
+        (value | 0x8000) as i16
+    } else {
+        value as i16
     }
 }
 
@@ -285,5 +303,31 @@ impl From<u8> for ExtensionSlot {
             extension_slot::EXPECTED_PRESENT => Self::ExpectedPresent,
             _ => Self::Reserved,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{FrequencyCompensation, ParseError};
+
+    #[test]
+    fn test_frequency_compensation_positive_offset_converts_to_ppm() {
+        // 150 LSB = 1.5 ppm (bit 14 clear → positive).
+        let ppm: f32 = FrequencyCompensation::from(150).try_into().unwrap();
+        assert_eq!(ppm, 1.5);
+    }
+
+    #[test]
+    fn test_frequency_compensation_negative_offset_sign_extends() {
+        // -100 ppm = 0x58F0 in 15-bit two's complement (bit 14 is the sign bit).
+        let ppm: f32 = FrequencyCompensation::from(0x58F0).try_into().unwrap();
+        assert_eq!(ppm, -100.0);
+    }
+
+    #[test]
+    fn test_frequency_compensation_not_available_sentinel_is_error() {
+        // 0xC000 marks the value as not available / role not initiator.
+        let result: Result<f32, ParseError> = FrequencyCompensation::from(0xC000).try_into();
+        assert!(matches!(result, Err(ParseError::RoleNotInitiator)));
     }
 }
