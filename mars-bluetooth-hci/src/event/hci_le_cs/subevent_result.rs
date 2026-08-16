@@ -506,7 +506,7 @@ impl SubeventResultEvent {
 
     /// Parse one Mode 0 step payload.
     ///
-    /// Mode 0 step data is 4 bytes for the reflector role (packet quality,
+    /// Mode 0 step data is 3 bytes for the reflector role (packet quality,
     /// RSSI, antenna) and 5 bytes for the initiator role (plus the measured
     /// frequency offset). The step-data length is the authoritative role
     /// indicator; no `origin` is required.
@@ -869,8 +869,8 @@ mod tests {
         [0x09, 0x48, 0x7B, 0x54, 0x00, 0x00, 0x00, 0x21, 0x03]
     }
 
-    fn mode0_reflector_step_data() -> [u8; 4] {
-        [0xA2, 0x34, 0x02, 0x00]
+    fn mode0_reflector_step_data() -> [u8; 3] {
+        [0xA2, 0x34, 0x02]
     }
 
     fn mode0_initiator_step_data(freq_lo: u8, freq_hi: u8) -> [u8; 5] {
@@ -1093,11 +1093,13 @@ mod tests {
 
     #[test]
     fn test_mode0_wrong_length_is_rejected() {
-        let bad_step_data = [0xA2, 0x34, 0x02];
+        // 4 bytes is neither the 3-byte reflector nor the 5-byte initiator
+        // payload, so it must be rejected.
+        let bad_step_data = [0xA2, 0x34, 0x02, 0x00];
         let message = continue_event(0x00, 0x05, 0x01, &bad_step_data);
 
         let error = SubeventResultEvent::try_from(message.as_slice()).unwrap_err();
-        assert!(matches!(error, ParseError::InvalidStepDataLength(0x00, 3, 4)));
+        assert!(matches!(error, ParseError::InvalidStepDataLength(0x00, 4, 3)));
     }
 
     #[test]

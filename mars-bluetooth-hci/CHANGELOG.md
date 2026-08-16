@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com), and this project adheres to [Semantic Versioning](https://semver.org).
 
 - - -
+## [mars-bluetooth-hci@0.13.1](https://github.com/Metirionic/mars-bluetooth-hci/compare/ebcf4134f7e2ebb839a34744d8687ea76edc88f0..mars-bluetooth-hci@0.13.1) - 2026-08-15
+#### Bug Fixes
+- Mode 0 reflector step data is 3 bytes, not 4 - ([ebcf413](https://github.com/Metirionic/mars-bluetooth-hci/commit/ebcf4134f7e2ebb839a34744d8687ea76edc88f0)) - atti, Claude
+#### Documentation
+- sync version literals to 0.13.0 - ([8b2bd50](https://github.com/Metirionic/mars-bluetooth-hci/commit/8b2bd50f47961be42ae6d20aa19d92b6b7f73399)) - atti, Claude
+
+- - -
+
 ## [mars-bluetooth-hci@0.13.0](https://github.com/Metirionic/mars-bluetooth-hci/compare/430f88b5c4ba82a103124696e7d18437f6b364ab..mars-bluetooth-hci@0.13.0) - 2026-08-14
 #### Features
 - populate Mode 0 steps from CS subevent results - ([430f88b](https://github.com/Metirionic/mars-bluetooth-hci/commit/430f88b5c4ba82a103124696e7d18437f6b364ab)) - atti, Claude
