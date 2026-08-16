@@ -14,7 +14,7 @@ pub use crate::event::hci_le_cs::constants::cs_params::{MAX_ANTENNA_PATH_COUNT, 
 use crate::event::hci_le_cs::constants::{handle, le_subevent_code, step_data_len, step_mode};
 use crate::event::{
     ExtensionSlot, FrequencyCompensation, ParseError, ProcedureAbortReason, ProcedureDoneStatus, ProcedureInfo,
-    ReferencePowerLevel, SubeventAbortReason, SubeventDoneStatus, SubeventInfo, ToneQualityIndicator,
+    ReferencePowerLevel, SubeventAbortReason, SubeventDoneStatus, SubeventInfo, ToneQualityIndicator, sign_extend_15,
 };
 
 /// The phase correction term (PCT), composed of I and Q components.
@@ -185,19 +185,29 @@ pub struct Mode0Data {
     pub packet_antenna: u8,
     /// Measured frequency offset, 0.01 ppm per least significant bit.
     ///
-    /// Present for the initiator role only; left at `0` for the reflector
-    /// role, which carries no offset on the wire.
+    /// 15-bit signed two's complement (bit 14 is the sign bit); the full 16-bit
+    /// value `0xC000` marks the offset as not available. Present for the
+    /// initiator role only; left at `0` for the reflector role, which carries
+    /// no offset on the wire. Decode with [`Mode0Data::to_ppm`].
     pub measured_freq_offset: u16,
 }
+
+/// Bluetooth sentinel for an unavailable Mode 0 measured frequency offset (`0xC000`).
+const MEASURED_FREQ_OFFSET_NOT_AVAILABLE: u16 = 0xC000;
 
 impl Mode0Data {
     /// Convert the raw measured frequency offset to parts per million.
     ///
-    /// The raw HCI field is a 15-bit unsigned value with 0.01 ppm per least
-    /// significant bit; the top bit is masked off per the BlueZ reference
-    /// decoder.
-    pub fn to_ppm(&self) -> f32 {
-        (self.measured_freq_offset & 0x7FFF) as f32 * 0.01
+    /// The raw HCI field is a 15-bit signed two's-complement value with
+    /// 0.01 ppm per least significant bit (valid range -100..+100 ppm);
+    /// bit 15 is reserved. The full 16-bit value `0xC000` marks the offset
+    /// as not available, in which case this returns [`None`]. Valid
+    /// measurements are sign-extended from bit 14 and returned in ppm.
+    pub fn to_ppm(&self) -> Option<f32> {
+        if self.measured_freq_offset == MEASURED_FREQ_OFFSET_NOT_AVAILABLE {
+            return None;
+        }
+        Some(sign_extend_15(self.measured_freq_offset) as f32 * 0.01)
     }
 }
 
@@ -1021,7 +1031,7 @@ mod tests {
         assert_eq!(mode0.packet_received_signal_strength_indicator, 0x34_i8);
         assert_eq!(mode0.packet_antenna, 0x02);
         assert_eq!(mode0.measured_freq_offset, 0);
-        assert_eq!(mode0.to_ppm(), 0.0);
+        assert_eq!(mode0.to_ppm(), Some(0.0));
     }
 
     #[test]
@@ -1038,19 +1048,32 @@ mod tests {
 
         let mode0 = event.steps[0].info.mode0;
         assert_eq!(mode0.measured_freq_offset, 150);
-        assert_eq!(mode0.to_ppm(), 1.5);
+        assert_eq!(mode0.to_ppm(), Some(1.5));
     }
 
     #[test]
-    fn test_mode0_to_ppm_masks_top_bit() {
-        // The top bit is masked off per the BlueZ reference decoder.
-        let message = continue_event(0x00, 0x05, 0x01, &mode0_initiator_step_data(0x96, 0x80));
+    fn test_mode0_to_ppm_sign_extends_negative_offset() {
+        // -100 ppm = 0x58F0 in 15-bit two's complement (bit 14 is the sign bit).
+        // The old mask-only decode read this as +227.68 ppm; sign-extend bit 14.
+        let message = continue_event(0x00, 0x05, 0x01, &mode0_initiator_step_data(0xF0, 0x58));
 
         let event = SubeventResultEvent::try_from(message.as_slice()).unwrap();
 
         let mode0 = event.steps[0].info.mode0;
-        assert_eq!(mode0.measured_freq_offset, 0x8096);
-        assert_eq!(mode0.to_ppm(), 1.5);
+        assert_eq!(mode0.measured_freq_offset, 0x58F0);
+        assert_eq!(mode0.to_ppm(), Some(-100.0));
+    }
+
+    #[test]
+    fn test_mode0_to_ppm_not_available_sentinel_is_none() {
+        // 0xC000 marks the measured frequency offset as not available.
+        let message = continue_event(0x00, 0x05, 0x01, &mode0_initiator_step_data(0x00, 0xC0));
+
+        let event = SubeventResultEvent::try_from(message.as_slice()).unwrap();
+
+        let mode0 = event.steps[0].info.mode0;
+        assert_eq!(mode0.measured_freq_offset, 0xC000);
+        assert_eq!(mode0.to_ppm(), None);
     }
 
     #[test]

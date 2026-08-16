@@ -311,8 +311,10 @@ typedef struct Mode0Data {
     /** \brief
      *  Measured frequency offset, 0.01 ppm per least significant bit.
      *
-     *  Present for the initiator role only; left at `0` for the reflector
-     *  role, which carries no offset on the wire.
+     *  15-bit signed two's complement (bit 14 is the sign bit); the full 16-bit
+     *  value `0xC000` marks the offset as not available. Present for the
+     *  initiator role only; left at `0` for the reflector role, which carries
+     *  no offset on the wire. Decode with [`Mode0Data::to_ppm`].
      */
     uint16_t measured_freq_offset;
 } Mode0Data_t;
