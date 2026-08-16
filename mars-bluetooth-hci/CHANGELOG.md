@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com), and this project adheres to [Semantic Versioning](https://semver.org).
 
 - - -
+## [mars-bluetooth-hci@0.13.2](https://github.com/Metirionic/mars-bluetooth-hci/compare/6912e46378d0fc754ec6c9683d84d7c9695b141d..mars-bluetooth-hci@0.13.2) - 2026-08-16
+#### Bug Fixes
+- ![BREAKING](https://img.shields.io/badge/BREAKING-red) sign-extend Mode 0 and FrequencyCompensation offsets from bit 14 - ([6912e46](https://github.com/Metirionic/mars-bluetooth-hci/commit/6912e46378d0fc754ec6c9683d84d7c9695b141d)) - atti, Claude
+
+- - -
+
 ## [mars-bluetooth-hci@0.13.1](https://github.com/Metirionic/mars-bluetooth-hci/compare/ebcf4134f7e2ebb839a34744d8687ea76edc88f0..mars-bluetooth-hci@0.13.1) - 2026-08-15
 #### Bug Fixes
 - Mode 0 reflector step data is 3 bytes, not 4 - ([ebcf413](https://github.com/Metirionic/mars-bluetooth-hci/commit/ebcf4134f7e2ebb839a34744d8687ea76edc88f0)) - atti, Claude
