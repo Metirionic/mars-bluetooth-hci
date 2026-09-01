@@ -35,6 +35,9 @@ default = ["std", "libc", "alloc"]
 std = ["hex/std", "mars-common/std"]
 alloc = ["postcard/alloc"]
 
+# Versioned Postcard persistence for decoded CS subevent-result frames.
+persisted-frame = ["std", "alloc", "libc"]
+
 libc = ["dep:postcard", "mars-common/libc"]
 libc-alloc = ["libc", "mars-common/libc-alloc"]
 libc-panic = ["libc", "mars-common/libc-panic"]
