@@ -306,7 +306,7 @@ static int build_and_send_local_event(uint64_t local_mac, uint64_t peer_mac,
     /* One representative Mode-2 step. See the canonical consumer for populating
      * all 160 entries; the full Step_t / Mode2_t layout is in mars_bluetooth_hci.h. */
     Step_t *s = &event.steps.idx[0];
-    s->mode    = 2;          /* MODE_2 — the only mode the parser fully decodes */
+    s->mode    = 2;          /* Mode 2 tone fields — the parser decodes Modes 0-3 and the 0xFF sentinel */
     s->channel = 19;
     /* s->info.kind = MODE_ROLE_SPECIFIC_INFO_KIND_MODE2;  populate s->info.mode2 per Mode2_t */
 

@@ -683,9 +683,12 @@ typedef struct SubeventResultEvent {
     /** \brief
      *  The origin of the data (initiator or reflector).
      *
-     *  Left at [`Origin::Unknown`] by the parser; the caller sets this from
-     *  out-of-band context (which node produced the bytes), as the file-reader
-     *  helper does.
+     *  Supplied to the parser up front via
+     *  [`SubeventResultEvent::try_from_with_origin`]: Mode 1 and Mode 3 steps
+     *  need the node's role while parsing (their timing field is interpreted
+     *  per role). Parsing through plain [`TryFrom`](core::convert::From)
+     *  (origin [`Origin::Unknown`]) only accepts subevents whose steps carry
+     *  no role-specific data.
      */
     Origin_t origin;
 

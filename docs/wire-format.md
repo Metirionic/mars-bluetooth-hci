@@ -208,7 +208,7 @@ a separate, versioned contract with an in-repo decoder; see
 ### SubeventResultEvent (tag 0x00)
 
 The payload is the `SubeventResultEvent` struct
-(`mars-bluetooth-hci/src/event/hci_le_cs/subevent_result.rs:404-449`), serialized as its fields
+(`mars-bluetooth-hci/src/event/hci_le_cs/subevent_result.rs:404-460`), serialized as its fields
 concatenated in declaration order (no struct header). The 15 top-level fields, in wire order:
 
 | # | Field | Type | Encoding note |

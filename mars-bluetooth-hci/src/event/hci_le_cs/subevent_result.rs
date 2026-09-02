@@ -32,8 +32,10 @@ impl TryFrom<&[u8]> for PhaseCorrectionTerm {
     type Error = TryFromSliceError;
 
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
-        let i = u16::from_le_bytes(value[..2].try_into()?);
-        let q = u16::from_le_bytes(value[1..3].try_into()?);
+        // Short slices error instead of panicking; see the
+        // `PacketPhaseCorrectionTerms` impl for the pattern.
+        let i = u16::from_le_bytes(value.get(..2).unwrap_or(&[]).try_into()?);
+        let q = u16::from_le_bytes(value.get(1..3).unwrap_or(&[]).try_into()?);
 
         let i = (i & 0x0FFF) << 4;
         let q = q & 0xFFF0;
@@ -83,9 +85,14 @@ impl TryFrom<&[u8]> for PacketPhaseCorrectionTerms {
     type Error = TryFromSliceError;
 
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+        // `value` may carry trailing bytes beyond the 7 consumed here (the
+        // parser hands over the whole step slice); a short slice errors
+        // instead of panicking (`TryFromSliceError` has no public
+        // constructor, so the empty-slice fallback raises it for us).
+        let bytes = <[u8; 7]>::try_from(value.get(..7).unwrap_or(&[]))?;
         Ok(Self {
-            first_phase_correction_term: value[0..3].try_into()?,
-            second_phase_correction_term: value[4..7].try_into()?,
+            first_phase_correction_term: bytes[0..3].try_into()?,
+            second_phase_correction_term: bytes[4..7].try_into()?,
         })
     }
 }
@@ -109,11 +116,14 @@ impl TryFrom<&[u8]> for RoundTripTimePacketFields {
     type Error = TryFromSliceError;
 
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+        // Tolerates trailing bytes and errors on short input; see the
+        // `PacketPhaseCorrectionTerms` impl for the pattern.
+        let bytes = <[u8; 6]>::try_from(value.get(..6).unwrap_or(&[]))?;
         Ok(Self {
-            packet_quality: value[0].into(),
-            packet_normalized_attack_detector_metric: value[1],
-            packet_received_signal_strength_indicator: value[2] as i8,
-            packet_antenna: value[5],
+            packet_quality: bytes[0].into(),
+            packet_normalized_attack_detector_metric: bytes[1],
+            packet_received_signal_strength_indicator: bytes[2] as i8,
+            packet_antenna: bytes[5],
         })
     }
 }
@@ -207,7 +217,7 @@ impl Mode0Data {
         if self.measured_freq_offset == MEASURED_FREQ_OFFSET_NOT_AVAILABLE {
             return None;
         }
-        Some(sign_extend_15(self.measured_freq_offset) as f32 * 0.01)
+        Some(sign_extend_15(self.measured_freq_offset) as f32 / 100.0)
     }
 }
 
@@ -408,9 +418,12 @@ pub enum Origin {
 pub struct SubeventResultEvent {
     /// The origin of the data (initiator or reflector).
     ///
-    /// Left at [`Origin::Unknown`] by the parser; the caller sets this from
-    /// out-of-band context (which node produced the bytes), as the file-reader
-    /// helper does.
+    /// Supplied to the parser up front via
+    /// [`SubeventResultEvent::try_from_with_origin`]: Mode 1 and Mode 3 steps
+    /// need the node's role while parsing (their timing field is interpreted
+    /// per role). Parsing through plain [`TryFrom`](core::convert::From)
+    /// (origin [`Origin::Unknown`]) only accepts subevents whose steps carry
+    /// no role-specific data.
     pub origin: Origin,
 
     /// MAC address of the local node.
@@ -713,6 +726,22 @@ impl SubeventResultEvent {
             let step_data = &message[step_data_offset..step_data_end];
 
             match step_mode {
+                // A zero-length step is an aborted step: the controller
+                // reports the slot without data regardless of its mode byte
+                // (Core Spec Vol 4, Part E §7.7.65.44/45). Preserve it as a
+                // sentinel instead of rejecting the whole subevent, so the
+                // other measurements are not lost with it.
+                _ if step_data_length == 0 => {
+                    self.steps[step_index] = Step {
+                        mode: step_mode::MODE_INVALID,
+                        channel: step_channel,
+                        info: ModeRoleSpecificInfo {
+                            kind: ModeRoleSpecificInfoKind::Invalid,
+                            ..Default::default()
+                        },
+                    };
+                    step_index += 1;
+                }
                 step_mode::MODE_INVALID => {
                     // A 0xFF mode marks a reported step slot as carrying no
                     // valid data. Preserve the sentinel with its own payload
@@ -955,6 +984,26 @@ impl SubeventResultEvent {
 impl TryFrom<&[u8]> for SubeventResultEvent {
     type Error = ParseError;
 
+    /// # Examples
+    ///
+    /// Parse a `CS_SUBEVENT_RESULT_CONTINUE` event carrying one Mode 1 step:
+    ///
+    /// ```
+    /// use mars_bluetooth_hci::event::hci_le_cs::subevent_result::{Origin, SubeventResultEvent};
+    ///
+    /// let message = [
+    ///     0x32, 0x01, 0x00, 0x07, 0x00, 0x00, 0x00, 0x01, 0x01, 0x01, 0x05, 0x06, 0x21, 0x80, 0x34,
+    ///     0x12, 0x34, 0x02,
+    /// ];
+    ///
+    /// let event = SubeventResultEvent::try_from_with_origin(&message, Origin::Initiator).unwrap();
+    /// assert_eq!(event.step_count, 1);
+    /// assert_eq!(event.steps[0].info.kind.mode(), 1);
+    /// ```
+    ///
+    /// Mode 1 and Mode 3 steps need the node's role at parse time; plain
+    /// [`TryFrom::try_from`] parses with [`Origin::Unknown`] and only accepts
+    /// subevents whose steps carry no role-specific data.
     fn try_from(message: &[u8]) -> Result<Self, Self::Error> {
         Self::parse_internal(message, Origin::Unknown)
     }
@@ -1473,13 +1522,35 @@ mod tests {
 
         // The sentinel round-trips through the persisted representation, so
         // the new kind's wire value is pinned.
-        let bytes = crate::event::hci_le_cs::persisted_frame::encode(&event).expect("sentinel event encodes");
-        let decoded = crate::event::hci_le_cs::persisted_frame::decode(
-            crate::event::hci_le_cs::persisted_frame::current_frame_descriptor(),
-            &bytes,
-        )
-        .expect("sentinel event decodes");
-        assert_eq!(decoded.steps[0].info.kind, ModeRoleSpecificInfoKind::Invalid);
+        #[cfg(feature = "persisted-frame")]
+        {
+            let bytes = crate::event::hci_le_cs::persisted_frame::encode(&event).expect("sentinel event encodes");
+            let decoded = crate::event::hci_le_cs::persisted_frame::decode(
+                crate::event::hci_le_cs::persisted_frame::current_frame_descriptor(),
+                &bytes,
+            )
+            .expect("sentinel event decodes");
+            assert_eq!(decoded.steps[0].info.kind, ModeRoleSpecificInfoKind::Invalid);
+        }
+    }
+
+    #[test]
+    fn test_zero_length_aborted_steps_preserve_the_subevent() {
+        // A controller aborts a step by reporting it with Step_Data_Length 0
+        // (Core Spec Vol 4, Part E §7.7.65.44/45); the slot is preserved as a
+        // sentinel and the subevent's real steps still parse.
+        let mut message = vec![0x32u8, 0x01, 0x00, 0x07, 0x00, 0x00, 0x00, 0x01, 0x02];
+        message.extend_from_slice(&[0x01, 0x05, 0x00]);
+        message.extend_from_slice(&[0x02, 0x05, mode2_step_data().len() as u8]);
+        message.extend_from_slice(&mode2_step_data());
+
+        let event = SubeventResultEvent::try_from_with_origin(message.as_slice(), Origin::Unknown).unwrap();
+
+        assert_eq!(event.step_count, 2);
+        assert_eq!(event.steps[0].mode, step_mode::MODE_INVALID);
+        assert_eq!(event.steps[0].info.kind, ModeRoleSpecificInfoKind::Invalid);
+        assert_eq!(event.steps[1].mode, step_mode::MODE_2);
+        assert_eq!(event.steps[1].info.mode2.antenna_permutation_index, 9);
     }
 
     #[test]
