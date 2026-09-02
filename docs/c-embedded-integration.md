@@ -198,7 +198,7 @@ pattern is four steps:
    identity fields (`origin`, `local_mac`, `peer_mac`) are caller-set by design.
 2. **Serialize** with COBS on:
    `serialize_subevent_result_event(&event, /*use_cobs=*/true)`
-   (`mars-bluetooth-hci/src/libc.rs:49`) returns a `SerializedData_t` by value.
+   (`mars-bluetooth-hci/src/libc.rs:62`) returns a `SerializedData_t` by value.
 3. **Copy** the framed bytes out of the returned buffer (`p_data[0..size]`)
    **before** freeing — `p_data` is invalid after the free.
 4. **Free** the Rust-owned buffer exactly once with `drop_bin`
@@ -260,7 +260,7 @@ complete population of every step.
 static void transmit_uart(const uint8_t *buf, size_t len);            /* firmware-defined */
 
 /* TX scratch must hold the worst-case framed payload. SubeventResultEvent_t is
- * ~8 KB (steps: Step_t idx[160]); COBS adds at most ceil(size/254)+1 bytes plus
+ * ~16 KB (steps: Step_t idx[160]); COBS adds at most ceil(size/254)+1 bytes plus
  * the 0x00 delimiter. Size this to YOUR real worst case, not this value. */
 static uint8_t g_tx_buf[16 * 1024];
 
@@ -291,7 +291,7 @@ static int send_subevent(const SubeventResultEvent_t *event)
 static int build_and_send_local_event(uint64_t local_mac, uint64_t peer_mac,
                                       uint16_t conn_handle)
 {
-    /* Zero-init the ~8 KB struct on the stack; no C constructor. Identity fields
+    /* Zero-init the ~16 KB struct on the stack; no C constructor. Identity fields
      * (origin/local_mac/peer_mac) are caller-set by design. */
     SubeventResultEvent_t event = {0};
     event.origin            = ORIGIN_INITIATOR;
@@ -315,7 +315,7 @@ static int build_and_send_local_event(uint64_t local_mac, uint64_t peer_mac,
 ```
 
 > **Size the copy, do not truncate it.** A naïve fixed-size buffer smaller than
-> the framed payload would silently truncate the ~8 KB event. Either size the TX
+> the framed payload would silently truncate the ~16 KB event. Either size the TX
 > scratch to the real worst case (as above, returning an error on overflow), or
 > transmit directly from `p_data` via DMA and call `drop_bin` after the DMA
 > completes — that avoids a second large buffer entirely.
@@ -389,7 +389,7 @@ restating it.
   ([ADR-0002](adr/0002-serialize-only-ffi.md)); do not expect a `deserialize_*`.
   The Android-only `rust_eh_personality` stub is `target_os`-gated, not
   feature-gated, and is irrelevant to a Cortex-M build.
-- **`SubeventResultEvent_t` is large (~8 KB; `steps: Step_t idx[160]`)** — mind
+- **`SubeventResultEvent_t` is large (~16 KB; `steps: Step_t idx[160]`)** — mind
   stack usage on constrained targets; the canonical consumer fills static
   `g_local_event` / `g_peer_event` rather than a stack struct.
 

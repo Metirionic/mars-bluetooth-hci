@@ -55,6 +55,7 @@ terms (I/Q), tone quality indicators, extension slots, and antenna permutation t
 | `libc` | Yes | Enable C FFI serialization functions |
 | `libc-alloc` | No | Bridge Rust allocator to C `malloc`/`free` |
 | `libc-panic` | No | Bridge Rust panic handler to C callback |
+| `persisted-frame` | Yes | Versioned persisted-frame encode/decode (implies `std`, `alloc`, `libc`) |
 | `headers` | No | Generate C headers via `safer-ffi` |
 
 ## C FFI
@@ -80,11 +81,11 @@ For a full build/link + FFI call-pattern walkthrough, see [docs/c-embedded-integ
 
 The crate can encode and decode versioned persisted frames of decoded subevent results
 through [`event::hci_le_cs::persisted_frame`](src/event/hci_le_cs/persisted_frame.rs)
-(available in the default host feature configuration; unavailable to the embedded `no_std`
-feature set). `encode` emits bare frame bytes — no in-band version — and the caller persists
-the descriptor returned by `current_frame_descriptor()` alongside them; `decode` is strict
-(trailing bytes are rejected) and dispatches only on the declared descriptor. V1 frames are
-byte-compatible with the non-COBS FFI serialization. See
+(the `persisted-frame` feature, enabled by default; unavailable to the embedded `no_std`
+feature set). `encode` validates the event's counts and emits bare frame bytes — no in-band
+version — and the caller persists the descriptor returned by `current_frame_descriptor()`
+alongside them; `decode` is strict (trailing bytes are rejected) and dispatches only on the
+declared descriptor. V1 frames are byte-compatible with the non-COBS FFI serialization. See
 [ADR-0003](../docs/adr/0003-versioned-persisted-frame-codec.md) and
 [docs/wire-format.md](../docs/wire-format.md) §Versioning and compatibility for the contract.
 

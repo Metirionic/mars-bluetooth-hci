@@ -13,32 +13,24 @@
 //! unsupported versions before reading bytes). When an arm is removed after a
 //! migration, the fixture directory is removed in the same change.
 //!
-//! The module is available in the default host configuration, mirroring the
-//! feature gate on the `persisted_frame` module itself
-//! (`mars-bluetooth-hci/src/event/hci_le_cs/mod.rs`): keep the two gates
-//! character-identical — editing one without the other silently compiles
-//! this suite to zero tests while CI stays green.
-#![cfg(all(feature = "std", feature = "alloc", feature = "libc"))]
+//! The module is available when the `persisted-frame` feature is enabled —
+//! part of the default build. Both this suite's gate and the module gate in
+//! `mars-bluetooth-hci/src/event/hci_le_cs/mod.rs` reference the same
+//! feature, so they cannot drift apart.
+#![cfg(feature = "persisted-frame")]
 
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use mars_bluetooth_hci::event::hci_le_cs::persisted_frame::test_support::{FIXTURE_ROOT, REPRESENTATIVE_STEP_MODES};
 use mars_bluetooth_hci::event::hci_le_cs::persisted_frame::{
     CS_SUBEVENT_FRAME_FORMAT, FrameCodecError, FrameDescriptor, current_frame_descriptor, decode, encode,
 };
 use mars_bluetooth_hci::event::hci_le_cs::subevent_result::{ModeRoleSpecificInfoKind, SubeventResultEvent};
 
-/// Fixture-root path relative to this crate's manifest directory.
-///
-/// Keep in sync with `FIXTURE_ROOT` in the codec's unit tests
-/// (`mars-bluetooth-hci/src/event/hci_le_cs/persisted_frame.rs`), which pin
-/// and regenerate the same layout from inside the crate.
-const FIXTURE_ROOT: &str = "tests/fixtures/persisted-frames";
 /// The first persisted frame version; no earlier version directory is valid.
 const FIRST_FRAME_VERSION: u16 = 1;
-/// Every retained codec version needs one representative frame per CS mode.
-const EXPECTED_STEP_MODES: [u8; 4] = [0, 1, 2, 3];
 
 /// One fixture discovered from its version directory and mode filename.
 #[derive(Debug)]
@@ -88,7 +80,7 @@ fn fixture_mode(path: &Path) -> u8 {
         "fixture filename is canonical"
     );
     assert!(
-        EXPECTED_STEP_MODES.contains(&mode),
+        REPRESENTATIVE_STEP_MODES.contains(&mode),
         "fixture has a supported step mode: {name}"
     );
     mode
@@ -138,7 +130,7 @@ fn fixtures_at(root: &Path) -> Vec<Fixture> {
             .collect();
         files.sort_by_key(|entry| entry.file_name());
 
-        let mut found_modes = [false; EXPECTED_STEP_MODES.len()];
+        let mut found_modes = [false; REPRESENTATIVE_STEP_MODES.len()];
         for file in files {
             let mode = fixture_mode(&file.path());
             found_modes[usize::from(mode)] = true;
@@ -309,7 +301,7 @@ mod fixture_layout_tests {
     #[should_panic(expected = "fixtures contain the current codec version")]
     fn rejects_a_fixture_set_without_the_current_version() {
         let root = tempfile::tempdir().expect("temporary fixture root is created");
-        write_fixture_set(root.path(), current_version() + 1, &EXPECTED_STEP_MODES);
+        write_fixture_set(root.path(), current_version() + 1, &REPRESENTATIVE_STEP_MODES);
 
         let _ = fixtures_at(root.path());
     }
@@ -318,8 +310,8 @@ mod fixture_layout_tests {
     #[should_panic(expected = "immediate migration source")]
     fn rejects_a_non_immediate_migration_source_version() {
         let root = tempfile::tempdir().expect("temporary fixture root is created");
-        write_fixture_set(root.path(), current_version(), &EXPECTED_STEP_MODES);
-        write_fixture_set(root.path(), current_version() + 1, &EXPECTED_STEP_MODES);
+        write_fixture_set(root.path(), current_version(), &REPRESENTATIVE_STEP_MODES);
+        write_fixture_set(root.path(), current_version() + 1, &REPRESENTATIVE_STEP_MODES);
 
         let _ = fixtures_at(root.path());
     }
@@ -328,8 +320,8 @@ mod fixture_layout_tests {
     #[should_panic(expected = "immediate migration source")]
     fn rejects_a_version_zero_directory() {
         let root = tempfile::tempdir().expect("temporary fixture root is created");
-        write_fixture_set(root.path(), current_version(), &EXPECTED_STEP_MODES);
-        write_fixture_set(root.path(), 0, &EXPECTED_STEP_MODES);
+        write_fixture_set(root.path(), current_version(), &REPRESENTATIVE_STEP_MODES);
+        write_fixture_set(root.path(), 0, &REPRESENTATIVE_STEP_MODES);
 
         let _ = fixtures_at(root.path());
     }

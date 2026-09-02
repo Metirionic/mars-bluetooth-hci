@@ -31,7 +31,7 @@ log = "0.4.29"
 tempfile = "3"
 
 [features]
-default = ["std", "libc", "alloc"]
+default = ["std", "libc", "alloc", "persisted-frame"]
 
 std = ["hex/std", "mars-common/std"]
 alloc = ["postcard/alloc"]
@@ -39,5 +39,7 @@ alloc = ["postcard/alloc"]
 libc = ["dep:postcard", "mars-common/libc"]
 libc-alloc = ["libc", "mars-common/libc-alloc"]
 libc-panic = ["libc", "mars-common/libc-panic"]
+
+persisted-frame = ["std", "alloc", "libc"]
 
 headers = ["safer-ffi/headers"]

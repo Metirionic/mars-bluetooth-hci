@@ -124,8 +124,16 @@ pub enum FrameCodecError {
     /// The frame decoded but left unconsumed trailing bytes.
     #[error("persisted CS subevent frame has trailing bytes")]
     TrailingBytes,
-    /// The frame decoded to an event that breaks an invariant no parsed event
-    /// can break; see [`SubeventResultEvent::validate_invariants`].
+    /// The frame's leading byte is not a V1 envelope tag: the bytes were
+    /// written by a different envelope schema, rather than being a truncated
+    /// or padded record of this one.
+    #[error("persisted CS subevent frame has unknown envelope tag `{tag}`")]
+    UnknownEnvelopeTag {
+        /// The leading byte that is not a known envelope tag.
+        tag: u8,
+    },
+    /// The frame's event exceeds the fixed step array or the antenna-path
+    /// table; see [`SubeventResultEvent::validate_invariants`].
     #[error("persisted CS subevent frame decodes to an event that violates the subevent-result invariants")]
     InvalidEvent(#[source] ParseError),
     /// The decoded FFI transport value is not a CS subevent-result event.
@@ -136,12 +144,16 @@ pub enum FrameCodecError {
 /// Encodes one CS subevent-result event using the current persisted-frame
 /// representation.
 ///
-/// The bytes are identical to the FFI serializer's non-COBS output by
-/// construction: both share one serialization core
-/// (`crate::libc::serialize_subevent_result_event_bytes`). No descriptor or
-/// version is embedded; persist the descriptor returned by
+/// The event's counts are validated first (see
+/// [`SubeventResultEvent::validate_invariants`]), so every frame this codec
+/// writes replays through [`decode`]; unlike the FFI serializer, `encode`
+/// rejects events that exceed the fixed arrays. The bytes are identical to
+/// the FFI serializer's non-COBS output by construction: both share one
+/// serialization core (`crate::libc::serialize_subevent_result_event_bytes`).
+/// No descriptor or version is embedded; persist the descriptor returned by
 /// [`current_frame_descriptor`] alongside the bytes.
 pub fn encode(event: &SubeventResultEvent) -> Result<Vec<u8>, FrameCodecError> {
+    event.validate_invariants().map_err(FrameCodecError::InvalidEvent)?;
     serialize_subevent_result_event_bytes(event).map_err(FrameCodecError::Encode)
 }
 
@@ -198,9 +210,18 @@ enum PersistedWireFrame<'d> {
 /// over-written, or concatenated storage record, which is rejected instead of
 /// silently decoding its first frame (a truncated record instead fails decode
 /// inside postcard with [`FrameCodecError::Decode`]). The decoded event must
-/// also satisfy the parser's invariants, so a corrupted frame cannot yield an
-/// event the parser could never produce.
+/// satisfy the count bounds of [`SubeventResultEvent::validate_invariants`];
+/// deeper semantic consistency of the stored event is not re-derived.
 fn decode_v1(bytes: &[u8]) -> Result<SubeventResultEvent, FrameCodecError> {
+    // V1 knows exactly two envelope tags. Any other leading byte was written
+    // by a different envelope schema — a version problem, not a truncated or
+    // padded record of this one. (The mirror below must stay aligned with
+    // these tags.)
+    if let Some(&tag) = bytes.first()
+        && tag > 0x01
+    {
+        return Err(FrameCodecError::UnknownEnvelopeTag { tag });
+    }
     let (frame, trailing) = take_from_bytes(bytes).map_err(FrameCodecError::Decode)?;
     if !trailing.is_empty() {
         return Err(FrameCodecError::TrailingBytes);
@@ -214,20 +235,33 @@ fn decode_v1(bytes: &[u8]) -> Result<SubeventResultEvent, FrameCodecError> {
     }
 }
 
+/// Test-support constants shared with the committed fixture suite.
+///
+/// Not a stable public API: this exists because Rust's crate model gives the
+/// unit tests (inside the crate) and the integration suite
+/// (`tests/persisted_frame_fixtures.rs`, outside it) no shared non-public
+/// home for one definition.
+#[doc(hidden)]
+pub mod test_support {
+    /// Fixture-root path relative to the crate's manifest directory.
+    ///
+    /// The unit tests pin and regenerate this layout; the integration suite
+    /// discovers it.
+    pub const FIXTURE_ROOT: &str = "tests/fixtures/persisted-frames";
+
+    /// Every retained codec version carries one representative fixture per
+    /// step mode in this list.
+    pub const REPRESENTATIVE_STEP_MODES: [u8; 4] = [0, 1, 2, 3];
+}
+
 #[cfg(test)]
 mod tests {
     use postcard::to_allocvec;
 
+    use super::test_support::{FIXTURE_ROOT, REPRESENTATIVE_STEP_MODES};
     use super::*;
     use crate::event::hci_le_cs::subevent_result::{Origin, test_messages};
     use crate::libc::{Serializable, SerializableRef};
-
-    /// Committed-fixture root relative to this crate's manifest directory.
-    ///
-    /// Keep in sync with `FIXTURE_ROOT` in `tests/persisted_frame_fixtures.rs`,
-    /// which discovers the same layout from outside the crate (Rust's crate
-    /// model prevents sharing one definition).
-    const FIXTURE_ROOT: &str = "tests/fixtures/persisted-frames";
 
     fn representative_event() -> SubeventResultEvent {
         let message = test_messages::continue_event(
@@ -243,25 +277,33 @@ mod tests {
     /// Returns the representative events whose current-version encodings are
     /// the committed current-version fixtures, one per CS Mode 0 through 3.
     fn representative_events_per_mode() -> Vec<(u8, SubeventResultEvent)> {
-        let mode0 = SubeventResultEvent::try_from_with_origin(
-            test_messages::continue_event(0x00, 0x05, 0x01, &test_messages::mode0_initiator_step_data(0x96, 0x00))
-                .as_slice(),
-            Origin::Unknown,
-        )
-        .expect("representative Mode 0 event parses");
-        let mode1 = representative_event();
-        let mode2 = SubeventResultEvent::try_from_with_origin(
-            test_messages::continue_event(0x02, 0x05, 0x01, &test_messages::mode2_step_data()).as_slice(),
-            Origin::Unknown,
-        )
-        .expect("representative Mode 2 event parses");
-        let mode3 = SubeventResultEvent::try_from_with_origin(
-            test_messages::continue_event(0x03, 0x05, 0x01, &test_messages::mode3_basic_step_data()).as_slice(),
-            Origin::Initiator,
-        )
-        .expect("representative Mode 3 event parses");
+        REPRESENTATIVE_STEP_MODES
+            .map(|mode| (mode, representative_event_for_mode(mode)))
+            .to_vec()
+    }
 
-        Vec::from([(0, mode0), (1, mode1), (2, mode2), (3, mode3)])
+    /// Builds the canonical representative event for one CS mode.
+    ///
+    /// Mode 0 and Mode 2 parse without a known origin; Mode 1 and Mode 3 need
+    /// the initiator origin for their role-specific timing.
+    fn representative_event_for_mode(mode: u8) -> SubeventResultEvent {
+        let message = match mode {
+            0 => test_messages::continue_event(0x00, 0x05, 0x01, &test_messages::mode0_initiator_step_data(0x96, 0x00)),
+            1 => test_messages::continue_event(
+                0x01,
+                0x05,
+                0x01,
+                &test_messages::mode1_basic_step_data(0x21, 0x12, 0x34),
+            ),
+            2 => test_messages::continue_event(0x02, 0x05, 0x01, &test_messages::mode2_step_data()),
+            3 => test_messages::continue_event(0x03, 0x05, 0x01, &test_messages::mode3_basic_step_data()),
+            other => panic!("no representative event for Mode {other}"),
+        };
+        let origin = match mode {
+            0 | 2 => Origin::Unknown,
+            _ => Origin::Initiator,
+        };
+        SubeventResultEvent::try_from_with_origin(message.as_slice(), origin).expect("representative event parses")
     }
 
     /// Returns the path of one committed fixture file.
@@ -339,9 +381,11 @@ mod tests {
 
     #[test]
     fn malformed_or_non_subevent_frames_are_rejected() {
+        // A leading byte that is not a V1 envelope tag was written by a
+        // different envelope schema, not a truncated record of this one.
         assert!(matches!(
             decode(current_frame_descriptor(), &[0xFF]),
-            Err(FrameCodecError::Decode(_))
+            Err(FrameCodecError::UnknownEnvelopeTag { tag: 0xFF })
         ));
 
         let log_message = to_allocvec(&SerializableRef::LogMessage("not a subevent")).expect("log serializes");
@@ -350,11 +394,26 @@ mod tests {
             Err(FrameCodecError::UnexpectedFrameKind)
         ));
 
+        // A log record with corrupt payload bytes fails decode inside postcard
+        // rather than surfacing as the wrong value kind.
+        assert!(matches!(
+            decode(current_frame_descriptor(), &[0x01, 0x02, 0xC3, 0x28]),
+            Err(FrameCodecError::Decode(_))
+        ));
+
         let cobs_framed: Vec<u8> = crate::libc::serialize_subevent_result_event(&representative_event(), true).into();
         assert!(
             decode(current_frame_descriptor(), &cobs_framed).is_err(),
             "COBS-framed transport bytes must not decode as a persisted frame"
         );
+    }
+
+    #[test]
+    fn encoding_rejects_events_with_broken_invariants() {
+        let mut event = representative_event();
+        event.step_count = 200;
+
+        assert!(matches!(encode(&event), Err(FrameCodecError::InvalidEvent(_))));
     }
 
     #[test]

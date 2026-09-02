@@ -422,6 +422,22 @@ pub struct SubeventResultEvent {
     pub has_initial_meta: bool,
 }
 
+/// Checks the step and antenna-path counts against the fixed arrays both
+/// index.
+///
+/// Shared by the parser's header checks and by
+/// [`SubeventResultEvent::validate_invariants`], so one place owns the bounds
+/// and their error mapping.
+fn check_counts(antenna_path_count: usize, step_count: usize) -> Result<(), ParseError> {
+    if antenna_path_count > MAX_ANTENNA_PATH_COUNT {
+        return Err(ParseError::ExceededMaxAntennaPathCount);
+    }
+    if step_count > MAX_NUM_STEPS_REPORTED {
+        return Err(ParseError::ExceededMaxStepCount);
+    }
+    Ok(())
+}
+
 impl SubeventResultEvent {
     /// Parse a subevent result message with known origin information.
     pub fn try_from_with_origin(message: &[u8], origin: Origin) -> Result<Self, ParseError> {
@@ -436,13 +452,7 @@ impl SubeventResultEvent {
     /// must re-validate so consumers indexing `steps[..step_count]` cannot
     /// panic on a corrupted or foreign-encoder frame.
     pub fn validate_invariants(&self) -> Result<(), ParseError> {
-        if self.step_count > MAX_NUM_STEPS_REPORTED {
-            return Err(ParseError::ExceededMaxStepCount);
-        }
-        if self.antenna_path_count > MAX_ANTENNA_PATH_COUNT {
-            return Err(ParseError::ExceededMaxAntennaPathCount);
-        }
-        Ok(())
+        check_counts(self.antenna_path_count, self.step_count)
     }
 
     /// Return the expected Mode 2 step payload length for an antenna path count.
@@ -706,7 +716,7 @@ impl SubeventResultEvent {
                     step_index += 1;
                 }
                 _ => {
-                    return Err(ParseError::InvalidModeType(step_mode, 16 + step_byte_offset));
+                    return Err(ParseError::InvalidModeType(step_mode, step_byte_offset));
                 }
             }
 
@@ -744,9 +754,9 @@ impl SubeventResultEvent {
     /// is rejected with an error instead of panicking: every message index is
     /// length-guarded before it is read.
     fn parse_internal(message: &[u8], origin: Origin) -> Result<Self, ParseError> {
-        // The common header prefix (subevent code and connection handle) runs
-        // through index 2.
-        if message.len() < 3 {
+        // The common header prefix (subevent code, connection handle, and the
+        // config id for a non-CS-test handle) runs through index 3.
+        if message.len() < 4 {
             return Err(ParseError::TooShort(message.len()));
         }
         let connection_handle = u16::from_le_bytes(message[1..3].try_into()?);
@@ -782,14 +792,7 @@ impl SubeventResultEvent {
                 let num_antenna_paths = message[14] as usize;
                 let num_steps_reported = message[15] as usize;
 
-                // The antenna-path count indexes the fixed Mode 2 tone tables
-                // and the step count indexes the fixed step array.
-                if num_antenna_paths > MAX_ANTENNA_PATH_COUNT {
-                    return Err(ParseError::ExceededMaxAntennaPathCount);
-                }
-                if num_steps_reported > MAX_NUM_STEPS_REPORTED {
-                    return Err(ParseError::ExceededMaxStepCount);
-                }
+                check_counts(num_antenna_paths, num_steps_reported)?;
 
                 SubeventResultEvent {
                     origin,
@@ -832,14 +835,7 @@ impl SubeventResultEvent {
                 let num_antenna_paths = message[7] as usize;
                 let num_steps_reported = message[8] as usize;
 
-                // The antenna-path count indexes the fixed Mode 2 tone tables
-                // and the step count indexes the fixed step array.
-                if num_antenna_paths > MAX_ANTENNA_PATH_COUNT {
-                    return Err(ParseError::ExceededMaxAntennaPathCount);
-                }
-                if num_steps_reported > MAX_NUM_STEPS_REPORTED {
-                    return Err(ParseError::ExceededMaxStepCount);
-                }
+                check_counts(num_antenna_paths, num_steps_reported)?;
 
                 SubeventResultEvent {
                     origin,
@@ -883,17 +879,18 @@ impl TryFrom<&[u8]> for SubeventResultEvent {
     }
 }
 
-/// Shared builders for representative subevent-result messages.
+/// Shared builders for representative subevent-result events.
 ///
 /// Promoted out of the test module so every in-crate test module constructs
-/// the same representative HCI messages — the persisted-frame codec tests lock
+/// the same representative HCI events — the persisted-frame codec tests lock
 /// the committed compatibility fixtures to these builders — instead of
 /// hand-copying their bytes.
 #[cfg(test)]
 pub(crate) mod test_messages {
     use crate::event::hci_le_cs::constants::le_subevent_code;
 
-    /// Builds a `CS_SUBEVENT_RESULT_CONTINUE` message carrying one step.
+    /// Builds the bytes of a `CS_SUBEVENT_RESULT_CONTINUE` event carrying one
+    /// step.
     pub(crate) fn continue_event(step_mode: u8, channel: u8, antenna_path_count: u8, step_data: &[u8]) -> Vec<u8> {
         let mut message = vec![
             le_subevent_code::CS_SUBEVENT_RESULT_CONTINUE,
@@ -925,7 +922,8 @@ pub(crate) mod test_messages {
         ]
     }
 
-    /// Mode 2 tone step data for a single antenna path.
+    /// Mode 2 step data carrying the per-antenna-path phase correction terms
+    /// and quality indicators for a single antenna path.
     pub(crate) fn mode2_step_data() -> [u8; 9] {
         [0x09, 0x48, 0x7B, 0x54, 0x00, 0x00, 0x00, 0x21, 0x03]
     }
@@ -1353,6 +1351,7 @@ mod tests {
             &[] as &[u8],
             &[le_subevent_code::CS_SUBEVENT_RESULT_CONTINUE],
             &[0x11, 0x01],
+            &[le_subevent_code::CS_SUBEVENT_RESULT_CONTINUE, 0x01, 0x00],
         ] {
             let error = SubeventResultEvent::try_from_with_origin(message, Origin::Initiator)
                 .expect_err("a message below the common header prefix is rejected");
@@ -1385,12 +1384,25 @@ mod tests {
 
     #[test]
     fn antenna_path_counts_beyond_the_tone_tables_are_rejected() {
-        // Mode 2 tone fields exist for at most `MAX_ANTENNA_PATH_COUNT` antenna
-        // paths; a larger count used to index out of bounds during parsing.
+        // Mode 2 tone fields exist for at most `MAX_ANTENNA_PATH_COUNT`
+        // antenna paths; the parser rejects an over-range count at the header
+        // instead of indexing the fixed tone tables out of bounds.
         let message = continue_event(0x02, 0x05, 0x05, &mode2_step_data());
 
         let error = SubeventResultEvent::try_from_with_origin(message.as_slice(), Origin::Unknown)
             .expect_err("an over-range antenna path count is rejected");
         assert!(matches!(error, ParseError::ExceededMaxAntennaPathCount));
+    }
+
+    #[test]
+    fn invalid_step_modes_report_the_offending_message_index() {
+        let mut message = continue_event(0x07, 0x05, 0x01, &mode2_step_data());
+
+        let error = SubeventResultEvent::try_from_with_origin(message.as_slice(), Origin::Unknown)
+            .expect_err("an unknown step mode is rejected");
+        assert!(matches!(error, ParseError::InvalidModeType(0x07, 9)), "{error:?}");
+
+        message[9] = 0x02; // a valid mode keeps the same message parseable
+        assert!(SubeventResultEvent::try_from_with_origin(message.as_slice(), Origin::Unknown).is_ok());
     }
 }
