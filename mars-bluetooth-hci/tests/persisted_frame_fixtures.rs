@@ -196,7 +196,8 @@ fn fixtures_at(root: &Path) -> Vec<Fixture> {
     // with a retained decoder arm — the dispatch stays the single source of
     // truth. This relies on a retained decoder never reporting
     // `UnsupportedVersion` for its input: that error is reserved for the
-    // dispatch itself.
+    // dispatch, and the codec's `retained_versions_match_the_decode_dispatch`
+    // unit test enforces the reservation behaviorally.
     for version in FIRST_CS_SUBEVENT_FRAME_VERSION..=current_version {
         let retained = !matches!(
             decode(FrameDescriptor::new(CS_SUBEVENT_FRAME_FORMAT, version), &[]),

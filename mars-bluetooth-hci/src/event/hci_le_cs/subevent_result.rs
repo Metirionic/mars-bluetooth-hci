@@ -291,6 +291,13 @@ pub enum ModeRoleSpecificInfoKind {
     /// Appended at the end to preserve the existing wire values of the
     /// variants above.
     Mode0Initiator,
+    /// A step slot reported without valid data (Step_Mode `0xFF`).
+    ///
+    /// Appended at the end to preserve the existing wire values of the
+    /// variants above. Old readers cannot deserialize frames that carry this
+    /// kind — the same trade-off as every appended variant, governed by the
+    /// persisted-frame version policy.
+    Invalid,
 }
 
 impl ModeRoleSpecificInfoKind {
@@ -309,6 +316,7 @@ impl ModeRoleSpecificInfoKind {
             Self::Mode3Initiator | Self::Mode3InitiatorPbrRtt | Self::Mode3Reflector | Self::Mode3ReflectorPbrRtt => {
                 step_mode::MODE_3
             }
+            Self::Invalid => step_mode::MODE_INVALID,
         }
     }
 }
@@ -676,28 +684,32 @@ impl SubeventResultEvent {
 
             let step_data_end = step_data_offset + step_data_length;
             if message.len() < step_data_end {
-                // The declared length overruns the message: report it against
-                // what is actually available, so a corrupt length byte is not
-                // diagnosed as a truncated message.
-                return Err(ParseError::InvalidStepDataLength(
-                    step_mode,
-                    message.len() - step_data_offset,
-                    step_data_length,
-                ));
+                // The header parsed but its declaration overruns the message:
+                // report the corrupt declaration against what is actually
+                // available, so it is not diagnosed as a truncated message.
+                return Err(ParseError::TruncatedStepData {
+                    index: step_index,
+                    declared: step_data_length,
+                    available: message.len() - step_data_offset,
+                });
             }
             let step_data = &message[step_data_offset..step_data_end];
 
             match step_mode {
                 step_mode::MODE_INVALID => {
                     // A 0xFF mode marks a reported step slot as carrying no
-                    // valid data. Preserve the sentinel instead of leaving a
-                    // fabricated default behind: `steps[..step_count]` then
-                    // holds exactly one entry per reported step, and
+                    // valid data. Preserve the sentinel with its own payload
+                    // kind instead of leaving a fabricated default behind:
+                    // `steps[..step_count]` then holds exactly one entry per
+                    // reported step whose kind never claims mode data, and
                     // consumers filter on the sentinel mode.
                     self.steps[step_index] = Step {
                         mode: step_mode,
                         channel: step_channel,
-                        info: ModeRoleSpecificInfo::default(),
+                        info: ModeRoleSpecificInfo {
+                            kind: ModeRoleSpecificInfoKind::Invalid,
+                            ..Default::default()
+                        },
                     };
                     step_index += 1;
                 }
@@ -1045,7 +1057,7 @@ mod tests {
     use super::{
         ModeRoleSpecificInfoKind, Origin, PhaseCorrectionTerm, RoundTripTimeRoleTimingKind, SubeventResultEvent,
     };
-    use crate::event::hci_le_cs::constants::le_subevent_code;
+    use crate::event::hci_le_cs::constants::{le_subevent_code, step_mode};
     use crate::event::{ExtensionSlot, ParseError, ToneQualityIndicator};
 
     #[test]
@@ -1423,6 +1435,30 @@ mod tests {
     }
 
     #[test]
+    fn test_invalid_mode_slots_preserve_the_sentinel() {
+        // A 0xFF slot followed by a real Mode 2 step: the sentinel is
+        // preserved with its own payload kind, so the step window maps 1:1 to
+        // the reported slots and no step fabricates mode data.
+        let mut message = vec![0x32u8, 0x01, 0x00, 0x07, 0x00, 0x00, 0x00, 0x01, 0x02];
+        message.extend_from_slice(&[0xFF, 0x05, 0x03, 0xAA, 0xBB, 0xCC]);
+        message.extend_from_slice(&[0x02, 0x05, mode2_step_data().len() as u8]);
+        message.extend_from_slice(&mode2_step_data());
+
+        let event = SubeventResultEvent::try_from_with_origin(message.as_slice(), Origin::Unknown).unwrap();
+
+        assert_eq!(event.step_count, 2);
+        let sentinel = &event.steps[0];
+        assert_eq!(sentinel.mode, step_mode::MODE_INVALID);
+        assert_eq!(sentinel.channel, 0x05);
+        assert_eq!(sentinel.info.kind, ModeRoleSpecificInfoKind::Invalid);
+        assert_eq!(sentinel.info.kind.mode(), sentinel.mode);
+        let mode2 = &event.steps[1];
+        assert_eq!(mode2.mode, step_mode::MODE_2);
+        assert_eq!(mode2.info.kind, ModeRoleSpecificInfoKind::Mode2);
+        assert_eq!(mode2.info.mode2.antenna_permutation_index, 9);
+    }
+
+    #[test]
     fn test_config_complete_header_fields_are_parsed() {
         let message = config_complete_event();
 
@@ -1471,6 +1507,15 @@ mod tests {
         let error = SubeventResultEvent::try_from_with_origin(&message, Origin::Unknown)
             .expect_err("a truncated config-complete message is rejected");
         assert!(matches!(error, ParseError::TooShort(4)));
+
+        // A multi-step message truncated between steps: the step-header guard
+        // must fire before the second step's bytes are read.
+        let mut message = continue_event(0x02, 0x05, 0x01, &mode2_step_data());
+        message[8] = 2; // report two steps but ship only one
+
+        let error = SubeventResultEvent::try_from_with_origin(message.as_slice(), Origin::Unknown)
+            .expect_err("a message truncated between steps is rejected");
+        assert!(matches!(error, ParseError::TooShort(_)));
     }
 
     #[test]
@@ -1484,7 +1529,14 @@ mod tests {
         let error = SubeventResultEvent::try_from_with_origin(message.as_slice(), Origin::Unknown)
             .expect_err("a step-data overrun is rejected");
         assert!(
-            matches!(error, ParseError::InvalidStepDataLength(0x02, 9, 200)),
+            matches!(
+                error,
+                ParseError::TruncatedStepData {
+                    index: 0,
+                    declared: 200,
+                    available: 9
+                }
+            ),
             "{error:?}"
         );
     }

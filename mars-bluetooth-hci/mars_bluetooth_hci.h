@@ -264,6 +264,15 @@ enum ModeRoleSpecificInfoKind {
      *  variants above.
      */
     MODE_ROLE_SPECIFIC_INFO_KIND_MODE0_INITIATOR,
+    /** \brief
+     *  A step slot reported without valid data (Step_Mode `0xFF`).
+     *
+     *  Appended at the end to preserve the existing wire values of the
+     *  variants above. Old readers cannot deserialize frames that carry this
+     *  kind — the same trade-off as every appended variant, governed by the
+     *  persisted-frame version policy.
+     */
+    MODE_ROLE_SPECIFIC_INFO_KIND_INVALID,
 }
 #ifndef DOXYGEN
 ; typedef uint8_t

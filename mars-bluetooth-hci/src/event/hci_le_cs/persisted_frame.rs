@@ -40,6 +40,12 @@
 //! frame is roughly 13 KB regardless of `step_count`. This is the price of
 //! byte-compatibility with the FFI representation; shrinking the frames would
 //! change the bytes and therefore requires a new declared version.
+//!
+//! Stack cost: `decode` builds the decoded event on the stack — serde
+//! deserializes the fixed-array event by value, which needs roughly 100 KB of
+//! stack per call in release builds (and far more in debug). Spawn replay
+//! workers with an adequate stack; boxing the envelope variant does not avoid
+//! this, because serde builds the inner value on the stack before boxing.
 
 extern crate alloc;
 
@@ -226,10 +232,15 @@ enum PersistedWireFrame<'d> {
 ///
 /// The whole input must be one frame: leftover bytes mean a padded,
 /// over-written, or concatenated storage record, which is rejected instead of
-/// silently decoding its first frame (a truncated record instead fails decode
-/// inside postcard with [`FrameCodecError::Decode`]). The decoded event must
-/// satisfy the count bounds of [`SubeventResultEvent::validate_invariants`];
-/// deeper semantic consistency of the stored event is not re-derived.
+/// silently decoding its first frame (a truncated record — or one damaged
+/// anywhere inside the fixed step array, including its unreported tail —
+/// fails decode inside postcard with [`FrameCodecError::Decode`]). The
+/// decoded event must satisfy the count bounds of
+/// [`SubeventResultEvent::validate_invariants`]; deeper semantic consistency
+/// of the stored event is not re-derived.
+///
+/// The event is built on the stack during deserialization: see the module
+/// docs for the stack size replay workers need.
 fn decode_v1(bytes: &[u8]) -> Result<SubeventResultEvent, FrameCodecError> {
     // V1 knows exactly two envelope tags. Any other leading byte was written
     // by a different envelope schema or is corrupted — either way not a
@@ -357,6 +368,27 @@ mod tests {
     }
 
     #[test]
+    fn v1_decoding_round_trips_populated_tail_slots() {
+        // The fixed step array is serialized in full: content beyond
+        // step_count must survive decode exactly, or replayed frames lose
+        // their unreported tail.
+        let mut event = representative_event();
+        event.steps[2] = event.steps[0];
+        event.steps[3].info.kind = ModeRoleSpecificInfoKind::Mode3ReflectorPbrRtt;
+
+        let bytes = encode(&event).expect("persisted serializer works");
+
+        let decoded = decode(current_frame_descriptor(), &bytes).expect("current descriptor decodes");
+
+        assert_eq!(encode(&decoded).expect("decoded event re-encodes"), bytes);
+        assert_eq!(decoded.steps[2].info.kind, event.steps[2].info.kind);
+        assert_eq!(
+            decoded.steps[3].info.kind,
+            ModeRoleSpecificInfoKind::Mode3ReflectorPbrRtt
+        );
+    }
+
+    #[test]
     fn v1_decoding_rejects_frames_with_trailing_bytes() {
         let event = representative_event();
         let mut bytes = encode(&event).expect("persisted serializer works");
@@ -449,11 +481,14 @@ mod tests {
     fn v1_frames_match_the_owned_boxed_ffi_envelope() {
         let event = representative_event();
 
-        let boxed = to_allocvec(&Serializable::SubeventResultEvent(Box::new(event.clone())))
+        let owned = to_allocvec(&Serializable::SubeventResultEvent(Box::new(event.clone())))
             .expect("owned envelope serializes");
+        let borrowed =
+            to_allocvec(&SerializableRef::SubeventResultEvent(&event)).expect("borrowed envelope serializes");
         let persisted = encode(&event).expect("persisted serializer works");
 
-        assert_eq!(persisted, boxed);
+        assert_eq!(persisted, owned);
+        assert_eq!(persisted, borrowed);
     }
 
     #[test]
@@ -576,6 +611,7 @@ mod tests {
         assert_tag!(8, ModeRoleSpecificInfoKind::Mode3Reflector);
         assert_tag!(9, ModeRoleSpecificInfoKind::Mode3ReflectorPbrRtt);
         assert_tag!(10, ModeRoleSpecificInfoKind::Mode0Initiator);
+        assert_tag!(11, ModeRoleSpecificInfoKind::Invalid);
         assert_tag!(0, RoundTripTimeRoleTimingKind::Unavailable);
         assert_tag!(1, RoundTripTimeRoleTimingKind::TimeOfArrivalTimeOfDepartureInitiator);
         assert_tag!(2, RoundTripTimeRoleTimingKind::TimeOfDepartureTimeOfArrivalReflector);

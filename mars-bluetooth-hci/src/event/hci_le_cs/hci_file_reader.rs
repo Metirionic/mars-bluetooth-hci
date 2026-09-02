@@ -105,3 +105,50 @@ pub fn read_file(path: &PathBuf) -> Vec<SubeventResultEvent> {
 
     results
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use super::*;
+
+    /// Writes a minimal vendor capture and returns its path.
+    fn write_capture(dir: &Path, contents: &str) -> PathBuf {
+        let path = dir.join("capture.txt");
+        fs::write(&path, contents).expect("vendor capture is written");
+        path
+    }
+
+    #[test]
+    fn reads_labelled_events_in_order() {
+        let dir = tempfile::tempdir().expect("temporary capture root is created");
+        let path = write_capture(
+            dir.path(),
+            "event:\nrequester\n32 01 00 07 00 00 00 01 01 01 05 06 21 80 34 12 34 02\n\
+             event:\nreflector\n32 02 00 07 00 00 00 01 00\n",
+        );
+
+        let events = read_file(&path);
+
+        assert_eq!(events.len(), 2);
+        assert!(matches!(events[0].origin, Origin::Initiator));
+        assert_eq!(events[0].connection_handle, 1);
+        assert!(matches!(events[1].origin, Origin::Reflector));
+        assert_eq!(events[1].connection_handle, 2);
+    }
+
+    #[test]
+    fn multi_byte_tokens_are_rejected_loudly() {
+        let dir = tempfile::tempdir().expect("temporary capture root is created");
+        // The token `0100` encodes two bytes; the old reader silently kept
+        // its first byte and shifted every following header field.
+        let path = write_capture(dir.path(), "event:\nrequester\n32 0100 00\n");
+
+        let result = std::panic::catch_unwind(|| read_file(&path));
+
+        assert!(
+            result.is_err(),
+            "a glued multi-byte token must not be silently truncated"
+        );
+    }
+}

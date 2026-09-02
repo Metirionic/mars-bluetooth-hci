@@ -53,7 +53,10 @@ pub enum SerializableRef<'d> {
 ///
 /// The shared serialization core of the FFI serializer's `use_cobs = false`
 /// path and the persisted-frame codec: both byte streams are this function's
-/// output, so the two cannot drift apart.
+/// output, so the two cannot drift apart. The core serializes any event
+/// faithfully — count validation is each caller's choice: the codec's
+/// `encode` validates, while the FFI serializer serializes whatever C built
+/// and a count-invalid event's bytes are rejected by the codec's replay gate.
 pub(crate) fn serialize_subevent_result_event_bytes(event: &SubeventResultEvent) -> postcard::Result<Vec<u8>> {
     // The fixed step array dominates the frame: one allocation sized to the
     // in-memory event (plus slack for the varint-encoded fields) avoids

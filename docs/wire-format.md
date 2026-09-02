@@ -143,8 +143,10 @@ writes the returned buffer to UART and then frees it with `drop_bin` (see
 
 ### use_cobs=false (unframed / non-streaming)
 
-The `use_cobs=false` path uses `postcard::to_allocvec` (`libc.rs:63`, `93`): plain postcard
-with **no COBS, no `0x00`, and no framing**. The bytes are simply:
+The `use_cobs=false` path serializes with plain postcard — `libc.rs:63` serializes the
+subevent-result envelope into a pre-sized buffer via `postcard::to_extend`, and the
+log-message path (`libc.rs:93`) uses `postcard::to_allocvec`; both emit identical postcard
+bytes — with **no COBS, no `0x00`, and no framing**. The bytes are simply:
 
 ```
 [variant tag] [payload]

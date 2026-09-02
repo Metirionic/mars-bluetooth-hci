@@ -2,6 +2,7 @@
 name = "mars-bluetooth-hci"
 version = "0.13.2"
 edition = "2024"
+rust-version = "1.88"
 license = "MIT"
 repository = "https://github.com/Metirionic/mars-bluetooth-hci"
 description = "Bluetooth HCI event parsing library for Bluetooth Channel Sounding (BLE CS)"

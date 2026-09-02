@@ -43,9 +43,20 @@ pub enum ParseError {
     /// Exceeded the maximum antenna path count.
     #[error("exceeded maximum antenna path count")]
     ExceededMaxAntennaPathCount,
-    /// The message ended before the subevent header or step data it declares.
+    /// The message ended before the subevent header or a step header it
+    /// declares.
     #[error("message too short: `{0}` bytes")]
     TooShort(usize),
+    /// A step header declared more data than the message carries.
+    #[error("step `{index}` declares `{declared}` data bytes but only `{available}` follow the header")]
+    TruncatedStepData {
+        /// The zero-based index of the offending step slot.
+        index: usize,
+        /// The data length the step header declares.
+        declared: usize,
+        /// The bytes actually available after the step header.
+        available: usize,
+    },
 }
 
 /// The relative frequency error compensation.
