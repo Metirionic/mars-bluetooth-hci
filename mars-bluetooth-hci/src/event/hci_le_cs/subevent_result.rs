@@ -293,6 +293,26 @@ pub enum ModeRoleSpecificInfoKind {
     Mode0Initiator,
 }
 
+impl ModeRoleSpecificInfoKind {
+    /// Returns the CS step mode whose payload this kind carries.
+    ///
+    /// The kind-to-mode mapping lives here so every consumer (the parser's
+    /// step population and tests that check a fixture's representativeness)
+    /// shares one compiler-checked definition.
+    pub fn mode(self) -> u8 {
+        match self {
+            Self::Mode0Reflector | Self::Mode0Initiator => step_mode::MODE_0,
+            Self::Mode1Initiator | Self::Mode1InitiatorPbrRtt | Self::Mode1Reflector | Self::Mode1ReflectorPbrRtt => {
+                step_mode::MODE_1
+            }
+            Self::Mode2 => step_mode::MODE_2,
+            Self::Mode3Initiator | Self::Mode3InitiatorPbrRtt | Self::Mode3Reflector | Self::Mode3ReflectorPbrRtt => {
+                step_mode::MODE_3
+            }
+        }
+    }
+}
+
 /// Mode- and role-specific information.
 ///
 /// The payload fields are selected by `kind`.
@@ -421,6 +441,16 @@ pub struct SubeventResultEvent {
     /// If true, initial metadata is available.
     pub has_initial_meta: bool,
 }
+
+/// Minimum subevent header length the parser indexes unconditionally:
+/// subevent code, connection handle, and config id.
+const MIN_HEADER_LEN: usize = 4;
+/// Header length of a config-complete subevent, through the step counts.
+const CONFIG_COMPLETE_HEADER_LEN: usize = 16;
+/// Header length of a subevent-result continue before its steps.
+const CONTINUE_HEADER_LEN: usize = 9;
+/// Length of one step's header (mode, channel, and data length).
+const STEP_HEADER_LEN: usize = 3;
 
 /// Checks the step and antenna-path counts against the fixed arrays both
 /// index.
@@ -627,10 +657,14 @@ impl SubeventResultEvent {
     /// Push steps from a binary message into the subevent result event.
     fn push_steps(&mut self, message: &[u8]) -> Result<(), ParseError> {
         let mut step_index = 0;
-        let mut step_byte_offset = if self.has_initial_meta { 16 } else { 9 };
+        let mut step_byte_offset = if self.has_initial_meta {
+            CONFIG_COMPLETE_HEADER_LEN
+        } else {
+            CONTINUE_HEADER_LEN
+        };
 
         for _ in 0..self.step_count {
-            let step_data_offset = 3 + step_byte_offset;
+            let step_data_offset = STEP_HEADER_LEN + step_byte_offset;
             // The step header (mode, channel, length) runs through
             // `step_data_offset - 1`.
             if message.len() < step_data_offset {
@@ -642,7 +676,14 @@ impl SubeventResultEvent {
 
             let step_data_end = step_data_offset + step_data_length;
             if message.len() < step_data_end {
-                return Err(ParseError::TooShort(message.len()));
+                // The declared length overruns the message: report it against
+                // what is actually available, so a corrupt length byte is not
+                // diagnosed as a truncated message.
+                return Err(ParseError::InvalidStepDataLength(
+                    step_mode,
+                    message.len() - step_data_offset,
+                    step_data_length,
+                ));
             }
             let step_data = &message[step_data_offset..step_data_end];
 
@@ -720,7 +761,7 @@ impl SubeventResultEvent {
                 }
             }
 
-            step_byte_offset += 3 + step_data_length;
+            step_byte_offset += STEP_HEADER_LEN + step_data_length;
         }
 
         Ok(())
@@ -755,8 +796,9 @@ impl SubeventResultEvent {
     /// length-guarded before it is read.
     fn parse_internal(message: &[u8], origin: Origin) -> Result<Self, ParseError> {
         // The common header prefix (subevent code, connection handle, and the
-        // config id for a non-CS-test handle) runs through index 3.
-        if message.len() < 4 {
+        // config id for a non-CS-test handle) runs through the last byte of
+        // `MIN_HEADER_LEN`.
+        if message.len() < MIN_HEADER_LEN {
             return Err(ParseError::TooShort(message.len()));
         }
         let connection_handle = u16::from_le_bytes(message[1..3].try_into()?);
@@ -771,7 +813,7 @@ impl SubeventResultEvent {
         let mut event = match message[0] {
             le_subevent_code::CS_CONFIG_COMPLETE => {
                 // The config-complete header runs through index 15.
-                if message.len() < 16 {
+                if message.len() < CONFIG_COMPLETE_HEADER_LEN {
                     return Err(ParseError::TooShort(message.len()));
                 }
                 let (start_acl_conn_event_counter, has_start_acl_conn_event_counter) = if connection_handle_is_cs_test {
@@ -824,8 +866,9 @@ impl SubeventResultEvent {
                 }
             }
             le_subevent_code::CS_SUBEVENT_RESULT_CONTINUE => {
-                // The continue header runs through index 8; steps follow from index 9.
-                if message.len() < 9 {
+                // The continue header runs through index 8; steps follow from
+                // `CONTINUE_HEADER_LEN` on.
+                if message.len() < CONTINUE_HEADER_LEN {
                     return Err(ParseError::TooShort(message.len()));
                 }
                 let abort_reason = message[6];
@@ -888,6 +931,29 @@ impl TryFrom<&[u8]> for SubeventResultEvent {
 #[cfg(test)]
 pub(crate) mod test_messages {
     use crate::event::hci_le_cs::constants::le_subevent_code;
+
+    /// Builds the bytes of a `CS_CONFIG_COMPLETE` event carrying no steps and
+    /// populated initial metadata.
+    pub(crate) fn config_complete_event() -> [u8; 16] {
+        [
+            le_subevent_code::CS_CONFIG_COMPLETE,
+            0x40,
+            0x00, // connection handle
+            0x07, // config id
+            0x34,
+            0x12, // start ACL connection event counter
+            0x42,
+            0x00, // procedure counter
+            0xC8,
+            0x00, // frequency compensation
+            0x0A, // reference power level
+            0x00, // procedure done status
+            0x00, // subevent done status
+            0x00, // abort reason
+            0x01, // antenna path count
+            0x00, // no steps reported
+        ]
+    }
 
     /// Builds the bytes of a `CS_SUBEVENT_RESULT_CONTINUE` event carrying one
     /// step.
@@ -960,8 +1026,9 @@ pub(crate) mod test_messages {
 #[cfg(test)]
 mod tests {
     use super::test_messages::{
-        continue_event, mode0_initiator_step_data, mode0_reflector_step_data, mode1_basic_step_data,
-        mode1_pbr_rtt_step_data, mode2_step_data, mode3_basic_step_data, mode3_pbr_rtt_step_data,
+        config_complete_event, continue_event, mode0_initiator_step_data, mode0_reflector_step_data,
+        mode1_basic_step_data, mode1_pbr_rtt_step_data, mode2_step_data, mode3_basic_step_data,
+        mode3_pbr_rtt_step_data,
     };
     use super::{
         ModeRoleSpecificInfoKind, Origin, PhaseCorrectionTerm, RoundTripTimeRoleTimingKind, SubeventResultEvent,
@@ -1344,6 +1411,22 @@ mod tests {
     }
 
     #[test]
+    fn test_config_complete_header_fields_are_parsed() {
+        let message = config_complete_event();
+
+        let event = SubeventResultEvent::try_from_with_origin(message.as_slice(), Origin::Unknown).unwrap();
+
+        assert!(event.has_initial_meta);
+        assert_eq!(event.step_count, 0);
+        assert_eq!(event.antenna_path_count, 1);
+        assert_eq!(event.config_id, 0x07);
+        assert!(event.has_config_id);
+        assert_eq!(event.initial_meta.start_acl_conn_event_counter, 0x1234);
+        assert!(event.initial_meta.has_start_acl_conn_event_counter);
+        assert_eq!(event.initial_meta.procedure_counter, 0x0042);
+    }
+
+    #[test]
     fn short_messages_are_rejected_without_panicking() {
         // Boot noise or a truncated buffer can produce short or empty messages;
         // every message index is length-guarded before it is read.
@@ -1372,14 +1455,19 @@ mod tests {
     }
 
     #[test]
-    fn step_data_overruns_are_rejected_without_panicking() {
-        // The step header claims more step data than the message carries.
+    fn step_data_overruns_are_reported_against_the_declared_length() {
+        // The step header claims more step data than the message carries: the
+        // error names the declared length and what is actually available, not
+        // a generic truncation of the whole message.
         let mut message = continue_event(0x02, 0x05, 0x01, &mode2_step_data());
         message[11] = 0xC8; // 200, beyond the bytes following the step header
 
         let error = SubeventResultEvent::try_from_with_origin(message.as_slice(), Origin::Unknown)
             .expect_err("a step-data overrun is rejected");
-        assert!(matches!(error, ParseError::TooShort(_)));
+        assert!(
+            matches!(error, ParseError::InvalidStepDataLength(0x02, 9, 200)),
+            "{error:?}"
+        );
     }
 
     #[test]

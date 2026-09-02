@@ -58,7 +58,7 @@ via `serialize_newtype_variant` (postcard `src/ser/serializer.rs:246-259`: it pu
 | Wire tag | Variant | Payload | Source |
 |---|---|---|---|
 | `0x00` | `SubeventResultEvent` | the struct's fields, concatenated in declaration order | `libc.rs:28`, `45` |
-| `0x01` | `LogMessage` | varint byte-length prefix + raw UTF-8 bytes (`&str`) | `libc.rs:33`, `48` |
+| `0x01` | `LogMessage` | varint byte-length prefix + raw UTF-8 bytes (`&str`) | `libc.rs:31`, `48` |
 
 ### No in-band version or magic byte
 
@@ -190,7 +190,7 @@ A conforming decoder implements the following per-frame procedure:
 4. **Dispatch** on the leading variant tag: `0x00` → `SubeventResultEvent`, `0x01` →
    `LogMessage`.
 
-The encode side is exercised by the round-trip test at `libc.rs:110-117`
+The encode side is exercised by the round-trip test at `libc.rs:111-117`
 (`to_allocvec_cobs` / `from_bytes_cobs`). For the UART wire path this repo is **encode-only**;
 the decode side runs in the closed-source `mars-ranging-demo` GUI binary, which is why this
 document — not that repo — is the authoritative contract. (Persisted-frame storage replay is
@@ -253,7 +253,7 @@ serializing). See [architecture.md](architecture.md) §Known limitations.
 There is no struct — the variant wraps a borrowed `&str`. After the `0x01` tag, the payload is
 postcard's `serialize_str` encoding: a varint byte-length prefix followed by the raw UTF-8
 bytes (`postcard serializer.rs:184-191`). The `#[serde(borrow)]` attribute on this variant
-(`libc.rs:32`, `47`) is a zero-copy deserialization hint and does not affect the wire format.
+(`libc.rs:30`, `47`) is a zero-copy deserialization hint and does not affect the wire format.
 
 ## Decoder notes (non-obvious encoding facts)
 

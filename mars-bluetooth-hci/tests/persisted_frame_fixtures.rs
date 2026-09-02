@@ -1,17 +1,21 @@
 //! Golden fixtures for the versioned CS subevent persistence contract.
 //!
 //! Each `vN/modeN.postcard.hex` path declares the frame version and the Mode
-//! carried by its raw, non-COBS Postcard bytes. The test discovers this layout
-//! so a new wire version adds only its fixtures and codec support, not another
-//! hand-maintained Rust fixture list.
+//! carried by its raw, non-COBS Postcard bytes, and each `vN` directory also
+//! carries `config-complete.postcard.hex`, which pins the initial-metadata
+//! half of the format (a config-complete event has no steps, hence no mode
+//! file). The test discovers this layout so a new wire version adds only its
+//! fixtures and codec support, not another hand-maintained Rust fixture list.
 //!
 //! The retained version window mirrors the persisted-frame codec's dispatch
 //! in both directions: every fixture must decode through the descriptor its
 //! path declares, so a version directory may exist exactly while the codec
 //! retains that version's decoder arm — and every retained decoder arm must
 //! have its fixture directory (probed through decode itself, which rejects
-//! unsupported versions before reading bytes). When an arm is removed after a
-//! migration, the fixture directory is removed in the same change.
+//! unsupported versions before reading bytes; a retained decoder reports
+//! decode-shaped errors, never `UnsupportedVersion`, which is reserved for
+//! the dispatch). When an arm is removed after a migration, the fixture
+//! directory is removed in the same change.
 //!
 //! The module is available when the `persisted-frame` feature is enabled —
 //! part of the default build. Both this suite's gate and the module gate in
@@ -19,25 +23,33 @@
 //! feature, so they cannot drift apart.
 #![cfg(feature = "persisted-frame")]
 
+#[path = "support/fixture_layout.rs"]
+mod fixture_support;
+
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use mars_bluetooth_hci::event::hci_le_cs::persisted_frame::test_support::{FIXTURE_ROOT, REPRESENTATIVE_STEP_MODES};
+use fixture_support::{
+    CONFIG_COMPLETE_FIXTURE_FILE, FIXTURE_ROOT, REPRESENTATIVE_STEP_MODES, fixture_file_name, read_fixture,
+    version_dir_name,
+};
 use mars_bluetooth_hci::event::hci_le_cs::persisted_frame::{
     CS_SUBEVENT_FRAME_FORMAT, FrameCodecError, FrameDescriptor, current_frame_descriptor, decode, encode,
 };
-use mars_bluetooth_hci::event::hci_le_cs::subevent_result::{ModeRoleSpecificInfoKind, SubeventResultEvent};
+use mars_bluetooth_hci::event::hci_le_cs::subevent_result::SubeventResultEvent;
 
 /// The first persisted frame version; no earlier version directory is valid.
 const FIRST_FRAME_VERSION: u16 = 1;
 
-/// One fixture discovered from its version directory and mode filename.
+/// One fixture discovered from its version directory and filename.
 #[derive(Debug)]
 struct Fixture {
     path: PathBuf,
     descriptor: FrameDescriptor<'static>,
-    expected_step_mode: u8,
+    /// The Mode whose representative data the fixture carries, or `None` for
+    /// the config-complete fixture.
+    expected_step_mode: Option<u8>,
 }
 
 /// Returns the absolute fixture-root path for this test invocation.
@@ -58,7 +70,11 @@ fn directory_version(path: &Path) -> u16 {
         .parse()
         .expect("fixture version directory has an integer version");
 
-    assert_eq!(name, format!("v{version}"), "fixture version directory is canonical");
+    assert_eq!(
+        name,
+        version_dir_name(version),
+        "fixture version directory is canonical"
+    );
     version
 }
 
@@ -74,11 +90,7 @@ fn fixture_mode(path: &Path) -> u8 {
         .expect("fixture filename follows `modeN.postcard.hex`");
     let mode: u8 = mode.parse().expect("fixture filename has an integer mode");
 
-    assert_eq!(
-        name,
-        format!("mode{mode}.postcard.hex"),
-        "fixture filename is canonical"
-    );
+    assert_eq!(name, fixture_file_name(mode), "fixture filename is canonical");
     assert!(
         REPRESENTATIVE_STEP_MODES.contains(&mode),
         "fixture has a supported step mode: {name}"
@@ -130,20 +142,36 @@ fn fixtures_at(root: &Path) -> Vec<Fixture> {
             .collect();
         files.sort_by_key(|entry| entry.file_name());
 
-        let mut found_modes = [false; REPRESENTATIVE_STEP_MODES.len()];
+        let mut found_modes = BTreeSet::new();
+        let mut found_config_complete = false;
         for file in files {
+            let name = file.file_name().to_str().map(str::to_owned);
+            if name.as_deref() == Some(CONFIG_COMPLETE_FIXTURE_FILE) {
+                found_config_complete = true;
+                fixtures.push(Fixture {
+                    path: file.path(),
+                    descriptor: FrameDescriptor::new(CS_SUBEVENT_FRAME_FORMAT, version),
+                    expected_step_mode: None,
+                });
+                continue;
+            }
+
             let mode = fixture_mode(&file.path());
-            found_modes[usize::from(mode)] = true;
+            found_modes.insert(mode);
             fixtures.push(Fixture {
                 path: file.path(),
                 descriptor: FrameDescriptor::new(CS_SUBEVENT_FRAME_FORMAT, version),
-                expected_step_mode: mode,
+                expected_step_mode: Some(mode),
             });
         }
 
         assert!(
-            found_modes.iter().all(|found| *found),
+            found_modes.iter().copied().eq(REPRESENTATIVE_STEP_MODES),
             "fixture version {version} contains one fixture for every Mode 0 through 3"
+        );
+        assert!(
+            found_config_complete,
+            "fixture version {version} contains the config-complete fixture"
         );
     }
 
@@ -168,7 +196,9 @@ fn fixtures_at(root: &Path) -> Vec<Fixture> {
     // committed fixtures. Decode rejects unsupported versions before reading
     // the bytes, so probing it with empty bytes reports exactly the versions
     // with a retained decoder arm — the dispatch stays the single source of
-    // truth.
+    // truth. This relies on a retained decoder never reporting
+    // `UnsupportedVersion` for its input: that error is reserved for the
+    // dispatch itself.
     for version in FIRST_FRAME_VERSION..=current_version {
         let retained = !matches!(
             decode(FrameDescriptor::new(CS_SUBEVENT_FRAME_FORMAT, version), &[]),
@@ -188,48 +218,11 @@ fn fixtures() -> Vec<Fixture> {
     fixtures_at(&fixture_root())
 }
 
-/// Decodes a fixture's reviewable hexadecimal representation into Postcard bytes.
-fn fixture_bytes(fixture: &Fixture) -> Vec<u8> {
-    let hex = fs::read_to_string(&fixture.path).expect("fixture is readable");
-    hex::decode(hex.trim()).expect("fixture contains valid hexadecimal Postcard bytes")
-}
-
 /// Decodes one fixture using exactly the descriptor declared by its path.
 fn decode_fixture(fixture: &Fixture) -> (Vec<u8>, SubeventResultEvent) {
-    let bytes = fixture_bytes(fixture);
+    let bytes = read_fixture(&fixture.path);
     let event = decode(fixture.descriptor, &bytes).expect("fixture decodes with its declared descriptor");
     (bytes, event)
-}
-
-/// Returns whether a step's payload kind is one of the kinds that carry the
-/// given mode's data.
-///
-/// Guards against a degenerate fixture whose parse leaves the steps at their
-/// defaults: `Step::default()` has mode 0 with the `Mode2` payload kind, which
-/// would pass a Mode-0 fixture's mode assertion vacuously.
-fn carries_its_modes_payload(kind: ModeRoleSpecificInfoKind, mode: u8) -> bool {
-    match mode {
-        0 => matches!(
-            kind,
-            ModeRoleSpecificInfoKind::Mode0Initiator | ModeRoleSpecificInfoKind::Mode0Reflector
-        ),
-        1 => matches!(
-            kind,
-            ModeRoleSpecificInfoKind::Mode1Initiator
-                | ModeRoleSpecificInfoKind::Mode1InitiatorPbrRtt
-                | ModeRoleSpecificInfoKind::Mode1Reflector
-                | ModeRoleSpecificInfoKind::Mode1ReflectorPbrRtt
-        ),
-        2 => matches!(kind, ModeRoleSpecificInfoKind::Mode2),
-        3 => matches!(
-            kind,
-            ModeRoleSpecificInfoKind::Mode3Initiator
-                | ModeRoleSpecificInfoKind::Mode3InitiatorPbrRtt
-                | ModeRoleSpecificInfoKind::Mode3Reflector
-                | ModeRoleSpecificInfoKind::Mode3ReflectorPbrRtt
-        ),
-        mode => panic!("fixture mode {mode} is outside the expected step modes"),
-    }
 }
 
 #[test]
@@ -238,22 +231,42 @@ fn every_fixture_decodes_with_its_declared_descriptor() {
     for fixture in fixtures() {
         let (_, event) = decode_fixture(&fixture);
 
-        assert!(
-            event.step_count > 0,
-            "{} fixture carries at least one step",
-            fixture.path.display()
-        );
-        assert_eq!(
-            event.steps[0].mode,
-            fixture.expected_step_mode,
-            "{} fixture has its expected step mode",
-            fixture.path.display()
-        );
-        assert!(
-            carries_its_modes_payload(event.steps[0].info.kind, fixture.expected_step_mode),
-            "{} fixture's first step carries its mode's payload kind",
-            fixture.path.display()
-        );
+        match fixture.expected_step_mode {
+            Some(mode) => {
+                assert!(
+                    event.step_count > 0,
+                    "{} fixture carries at least one step",
+                    fixture.path.display()
+                );
+                assert_eq!(
+                    event.steps[0].mode,
+                    mode,
+                    "{} fixture has its expected step mode",
+                    fixture.path.display()
+                );
+                assert_eq!(
+                    event.steps[0].info.kind.mode(),
+                    mode,
+                    "{} fixture's first step carries its mode's payload kind",
+                    fixture.path.display()
+                );
+            }
+            None => {
+                // The config-complete fixture pins the initial-metadata half
+                // of the format, which carries no steps.
+                assert!(
+                    event.has_initial_meta,
+                    "{} fixture carries the initial metadata",
+                    fixture.path.display()
+                );
+                assert_eq!(
+                    event.step_count,
+                    0,
+                    "{} config-complete fixture carries no steps",
+                    fixture.path.display()
+                );
+            }
+        }
     }
 }
 
@@ -285,11 +298,12 @@ mod fixture_layout_tests {
 
     /// Writes the minimal valid filenames required for fixture-layout tests.
     fn write_fixture_set(root: &Path, version: u16, modes: &[u8]) {
-        let directory = root.join(format!("v{version}"));
+        let directory = root.join(version_dir_name(version));
         fs::create_dir(&directory).expect("fixture version directory is created");
         for mode in modes {
-            fs::write(directory.join(format!("mode{mode}.postcard.hex")), "00\n").expect("fixture file is written");
+            fs::write(directory.join(fixture_file_name(*mode)), "00\n").expect("fixture file is written");
         }
+        fs::write(directory.join(CONFIG_COMPLETE_FIXTURE_FILE), "00\n").expect("config-complete fixture is written");
     }
 
     /// Uses the real current descriptor while constructing an invalid source version.
@@ -339,7 +353,7 @@ mod fixture_layout_tests {
     #[should_panic(expected = "fixture filename follows")]
     fn rejects_a_malformed_fixture_filename() {
         let root = tempfile::tempdir().expect("temporary fixture root is created");
-        let directory = root.path().join(format!("v{}", current_version()));
+        let directory = root.path().join(version_dir_name(current_version()));
         fs::create_dir(&directory).expect("fixture version directory is created");
         fs::write(directory.join("mode0.hex"), "00\n").expect("malformed fixture is written");
 

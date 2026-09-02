@@ -132,6 +132,7 @@ reason. `mars-common` has no bin target, so `--lib` there is just for consistenc
 | `alloc`      | Enables `postcard`'s `alloc` feature.                                                   |
 | `libc-alloc` | Installs a `malloc`/`free` global allocator (`mars-common/src/libc/alloc.rs`).          |
 | `libc-panic` | Installs a panic handler that calls a C-provided `rust_panic_cb` (`mars-common/src/libc/panic.rs`). |
+| `persisted-frame` | Enables the versioned persisted-frame codec (`event::hci_le_cs::persisted_frame`). Part of `default`; implies `std`, `alloc`, and `libc`, so it must be excluded from `--no-default-features` embedded builds. |
 
 `libc-alloc` and `libc-panic` both imply `libc`, so listing `libc` explicitly in the set
 is harmless and is the convention used by the CMake config and the README snippets.

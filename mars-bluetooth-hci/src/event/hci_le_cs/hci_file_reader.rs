@@ -83,7 +83,14 @@ pub fn read_file(path: &PathBuf) -> Vec<SubeventResultEvent> {
             }
             ReadState::Data(node) => {
                 let digits = line.split_whitespace();
-                let values: Vec<u8> = digits.into_iter().map(|x| hex::decode(x).unwrap()[0]).collect();
+                let values: Vec<u8> = digits
+                    .into_iter()
+                    .map(|token| {
+                        let bytes = hex::decode(token).expect("vendor data token is valid hexadecimal");
+                        assert_eq!(bytes.len(), 1, "vendor data token encodes exactly one byte: {token}");
+                        bytes[0]
+                    })
+                    .collect();
 
                 let result = SubeventResultEvent::try_from_with_origin(values.as_slice(), node).unwrap();
                 results.push(result);

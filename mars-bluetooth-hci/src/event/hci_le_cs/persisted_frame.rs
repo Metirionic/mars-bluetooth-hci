@@ -125,8 +125,8 @@ pub enum FrameCodecError {
     #[error("persisted CS subevent frame has trailing bytes")]
     TrailingBytes,
     /// The frame's leading byte is not a V1 envelope tag: the bytes were
-    /// written by a different envelope schema, rather than being a truncated
-    /// or padded record of this one.
+    /// written by a different envelope schema, or the record is corrupted —
+    /// either way it is not a truncated or padded record of this one.
     #[error("persisted CS subevent frame has unknown envelope tag `{tag}`")]
     UnknownEnvelopeTag {
         /// The leading byte that is not a known envelope tag.
@@ -214,9 +214,9 @@ enum PersistedWireFrame<'d> {
 /// deeper semantic consistency of the stored event is not re-derived.
 fn decode_v1(bytes: &[u8]) -> Result<SubeventResultEvent, FrameCodecError> {
     // V1 knows exactly two envelope tags. Any other leading byte was written
-    // by a different envelope schema — a version problem, not a truncated or
-    // padded record of this one. (The mirror below must stay aligned with
-    // these tags.)
+    // by a different envelope schema or is corrupted — either way not a
+    // truncated or padded record of this one. (The mirror below must stay
+    // aligned with these tags.)
     if let Some(&tag) = bytes.first()
         && tag > 0x01
     {
@@ -235,57 +235,47 @@ fn decode_v1(bytes: &[u8]) -> Result<SubeventResultEvent, FrameCodecError> {
     }
 }
 
-/// Test-support constants shared with the committed fixture suite.
-///
-/// Not a stable public API: this exists because Rust's crate model gives the
-/// unit tests (inside the crate) and the integration suite
-/// (`tests/persisted_frame_fixtures.rs`, outside it) no shared non-public
-/// home for one definition.
-#[doc(hidden)]
-pub mod test_support {
-    /// Fixture-root path relative to the crate's manifest directory.
-    ///
-    /// The unit tests pin and regenerate this layout; the integration suite
-    /// discovers it.
-    pub const FIXTURE_ROOT: &str = "tests/fixtures/persisted-frames";
-
-    /// Every retained codec version carries one representative fixture per
-    /// step mode in this list.
-    pub const REPRESENTATIVE_STEP_MODES: [u8; 4] = [0, 1, 2, 3];
-}
+#[cfg(test)]
+#[path = "../../../tests/support/fixture_layout.rs"]
+mod fixture_support;
 
 #[cfg(test)]
 mod tests {
     use postcard::to_allocvec;
 
-    use super::test_support::{FIXTURE_ROOT, REPRESENTATIVE_STEP_MODES};
+    use super::fixture_support::{
+        CONFIG_COMPLETE_FIXTURE_FILE, FIXTURE_ROOT, REPRESENTATIVE_STEP_MODES, fixture_file_name, read_fixture,
+        version_dir_name,
+    };
     use super::*;
     use crate::event::hci_le_cs::subevent_result::{Origin, test_messages};
     use crate::libc::{Serializable, SerializableRef};
 
+    /// Returns the representative Mode 1 event exercised by the codec tests.
     fn representative_event() -> SubeventResultEvent {
-        let message = test_messages::continue_event(
-            0x01,
-            0x05,
-            0x01,
-            &test_messages::mode1_basic_step_data(0x21, 0x12, 0x34),
-        );
-        SubeventResultEvent::try_from_with_origin(message.as_slice(), Origin::Initiator)
-            .expect("representative event parses")
+        representative_event_for_mode(1)
     }
 
-    /// Returns the representative events whose current-version encodings are
-    /// the committed current-version fixtures, one per CS Mode 0 through 3.
-    fn representative_events_per_mode() -> Vec<(u8, SubeventResultEvent)> {
-        REPRESENTATIVE_STEP_MODES
-            .map(|mode| (mode, representative_event_for_mode(mode)))
-            .to_vec()
+    /// Returns the representative frames whose current-version encodings are
+    /// the committed current-version fixtures, keyed by their fixture file
+    /// names.
+    fn representative_fixtures() -> Vec<(String, SubeventResultEvent)> {
+        let mut fixtures: Vec<(String, SubeventResultEvent)> = REPRESENTATIVE_STEP_MODES
+            .map(|mode| (fixture_file_name(mode), representative_event_for_mode(mode)))
+            .to_vec();
+        fixtures.push((
+            CONFIG_COMPLETE_FIXTURE_FILE.to_string(),
+            representative_config_complete_event(),
+        ));
+        fixtures
     }
 
     /// Builds the canonical representative event for one CS mode.
     ///
     /// Mode 0 and Mode 2 parse without a known origin; Mode 1 and Mode 3 need
-    /// the initiator origin for their role-specific timing.
+    /// the initiator origin for their role-specific timing. The Mode 1 and
+    /// Mode 3 representatives use the PBR/RTT step layout, whose packet phase
+    /// correction terms are a superset of the basic layout's fields.
     fn representative_event_for_mode(mode: u8) -> SubeventResultEvent {
         let message = match mode {
             0 => test_messages::continue_event(0x00, 0x05, 0x01, &test_messages::mode0_initiator_step_data(0x96, 0x00)),
@@ -293,10 +283,10 @@ mod tests {
                 0x01,
                 0x05,
                 0x01,
-                &test_messages::mode1_basic_step_data(0x21, 0x12, 0x34),
+                &test_messages::mode1_pbr_rtt_step_data(0x21, 0x12, 0x34),
             ),
             2 => test_messages::continue_event(0x02, 0x05, 0x01, &test_messages::mode2_step_data()),
-            3 => test_messages::continue_event(0x03, 0x05, 0x01, &test_messages::mode3_basic_step_data()),
+            3 => test_messages::continue_event(0x03, 0x05, 0x01, &test_messages::mode3_pbr_rtt_step_data()),
             other => panic!("no representative event for Mode {other}"),
         };
         let origin = match mode {
@@ -306,16 +296,27 @@ mod tests {
         SubeventResultEvent::try_from_with_origin(message.as_slice(), origin).expect("representative event parses")
     }
 
-    /// Returns the path of one committed fixture file.
-    fn fixture_path(version: u16, mode: u8) -> std::path::PathBuf {
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join(FIXTURE_ROOT)
-            .join(format!("v{version}"))
-            .join(format!("mode{mode}.postcard.hex"))
+    /// Builds the canonical config-complete representative event, pinning the
+    /// initial-metadata half of the wire format.
+    fn representative_config_complete_event() -> SubeventResultEvent {
+        let message = test_messages::config_complete_event();
+        SubeventResultEvent::try_from_with_origin(message.as_slice(), Origin::Unknown)
+            .expect("representative config-complete event parses")
     }
 
+    /// Returns the path of one committed fixture file.
+    fn fixture_path(version: u16, file_name: &str) -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(FIXTURE_ROOT)
+            .join(version_dir_name(version))
+            .join(file_name)
+    }
+
+    /// Verifies the FFI serializer wrapper stays wired to the shared
+    /// serialization core that [`encode`] also calls, so the FFI byte stream
+    /// and the persisted byte stream remain identical.
     #[test]
-    fn v1_encoding_matches_the_existing_hci_ffi_serializer() {
+    fn ffi_wrapper_stays_wired_to_the_shared_serialization_core() {
         let event = representative_event();
 
         let existing: Vec<u8> = crate::libc::serialize_subevent_result_event(&event, false).into();
@@ -381,8 +382,9 @@ mod tests {
 
     #[test]
     fn malformed_or_non_subevent_frames_are_rejected() {
-        // A leading byte that is not a V1 envelope tag was written by a
-        // different envelope schema, not a truncated record of this one.
+        // A leading byte that is not a V1 envelope tag: written by a different
+        // envelope schema, or a corrupted record — either way not a truncated
+        // or padded V1 record.
         assert!(matches!(
             decode(current_frame_descriptor(), &[0xFF]),
             Err(FrameCodecError::UnknownEnvelopeTag { tag: 0xFF })
@@ -471,17 +473,14 @@ mod tests {
     }
 
     #[test]
-    fn representative_events_reproduce_the_committed_current_fixtures() {
-        for (mode, event) in representative_events_per_mode() {
+    fn representative_frames_reproduce_the_committed_current_fixtures() {
+        for (file_name, event) in representative_fixtures() {
             let expected = encode(&event).expect("representative event encodes");
-
-            let hex = std::fs::read_to_string(fixture_path(CURRENT_CS_SUBEVENT_FRAME_VERSION, mode))
-                .expect("fixture is readable");
-            let committed = hex::decode(hex.trim()).expect("fixture contains valid hexadecimal Postcard bytes");
+            let committed = read_fixture(&fixture_path(CURRENT_CS_SUBEVENT_FRAME_VERSION, &file_name));
 
             assert_eq!(
                 expected, committed,
-                "the Mode {mode} representative event reproduces the committed current-version fixture"
+                "the {file_name} representative event reproduces the committed current-version fixture"
             );
         }
     }
@@ -501,16 +500,13 @@ mod tests {
     fn regenerate_committed_current_fixtures() {
         let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(FIXTURE_ROOT)
-            .join(format!("v{}", CURRENT_CS_SUBEVENT_FRAME_VERSION));
+            .join(version_dir_name(CURRENT_CS_SUBEVENT_FRAME_VERSION));
         std::fs::create_dir_all(&directory).expect("fixture directory is created");
 
-        for (mode, event) in representative_events_per_mode() {
+        for (file_name, event) in representative_fixtures() {
             let bytes = encode(&event).expect("representative event encodes");
-            std::fs::write(
-                directory.join(format!("mode{mode}.postcard.hex")),
-                format!("{}\n", hex::encode(bytes)),
-            )
-            .expect("fixture is written");
+            std::fs::write(directory.join(&file_name), format!("{}\n", hex::encode(bytes)))
+                .expect("fixture is written");
         }
     }
 }
