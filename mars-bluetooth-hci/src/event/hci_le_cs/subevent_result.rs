@@ -828,15 +828,18 @@ impl TryFrom<&[u8]> for SubeventResultEvent {
     }
 }
 
+/// Shared builders for representative subevent-result messages.
+///
+/// Promoted out of the test module so every in-crate test module constructs
+/// the same representative HCI messages — the persisted-frame codec tests lock
+/// the committed compatibility fixtures to these builders — instead of
+/// hand-copying their bytes.
 #[cfg(test)]
-mod tests {
-    use super::{
-        ModeRoleSpecificInfoKind, Origin, PhaseCorrectionTerm, RoundTripTimeRoleTimingKind, SubeventResultEvent,
-    };
+pub(crate) mod test_messages {
     use crate::event::hci_le_cs::constants::le_subevent_code;
-    use crate::event::{ExtensionSlot, ParseError, ToneQualityIndicator};
 
-    fn continue_event(step_mode: u8, channel: u8, antenna_path_count: u8, step_data: &[u8]) -> Vec<u8> {
+    /// Builds a `CS_SUBEVENT_RESULT_CONTINUE` message carrying one step.
+    pub(crate) fn continue_event(step_mode: u8, channel: u8, antenna_path_count: u8, step_data: &[u8]) -> Vec<u8> {
         let mut message = vec![
             le_subevent_code::CS_SUBEVENT_RESULT_CONTINUE,
             0x01,
@@ -855,27 +858,44 @@ mod tests {
         message
     }
 
-    fn mode1_basic_step_data(quality: u8, timing_lo: u8, timing_hi: u8) -> [u8; 6] {
+    /// Mode 1 step data with packet fields and role timing, without PCTs.
+    pub(crate) fn mode1_basic_step_data(quality: u8, timing_lo: u8, timing_hi: u8) -> [u8; 6] {
         [quality, 0x80, 0x34, timing_lo, timing_hi, 0x02]
     }
 
-    fn mode1_pbr_rtt_step_data(quality: u8, timing_lo: u8, timing_hi: u8) -> [u8; 14] {
+    /// Mode 1 step data with packet fields, role timing, and packet PCTs.
+    pub(crate) fn mode1_pbr_rtt_step_data(quality: u8, timing_lo: u8, timing_hi: u8) -> [u8; 14] {
         [
             quality, 0x80, 0x34, timing_lo, timing_hi, 0x02, 0x48, 0x7B, 0x54, 0x00, 0x00, 0x00, 0x00, 0x00,
         ]
     }
 
-    fn mode2_step_data() -> [u8; 9] {
+    /// Mode 2 tone step data for a single antenna path.
+    pub(crate) fn mode2_step_data() -> [u8; 9] {
         [0x09, 0x48, 0x7B, 0x54, 0x00, 0x00, 0x00, 0x21, 0x03]
     }
 
-    fn mode0_reflector_step_data() -> [u8; 3] {
+    /// Mode 0 reflector step data.
+    pub(crate) fn mode0_reflector_step_data() -> [u8; 3] {
         [0xA2, 0x34, 0x02]
     }
 
-    fn mode0_initiator_step_data(freq_lo: u8, freq_hi: u8) -> [u8; 5] {
+    /// Mode 0 initiator step data with the measured frequency offset.
+    pub(crate) fn mode0_initiator_step_data(freq_lo: u8, freq_hi: u8) -> [u8; 5] {
         [0xA2, 0x34, 0x02, freq_lo, freq_hi]
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::test_messages::{
+        continue_event, mode0_initiator_step_data, mode0_reflector_step_data, mode1_basic_step_data,
+        mode1_pbr_rtt_step_data, mode2_step_data,
+    };
+    use super::{
+        ModeRoleSpecificInfoKind, Origin, PhaseCorrectionTerm, RoundTripTimeRoleTimingKind, SubeventResultEvent,
+    };
+    use crate::event::{ExtensionSlot, ParseError, ToneQualityIndicator};
 
     #[test]
     fn test_pct() {

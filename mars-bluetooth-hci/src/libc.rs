@@ -1,6 +1,7 @@
 //! C interface module for serialization.
 extern crate alloc;
 
+use alloc::vec::Vec;
 use core::ffi::c_char;
 use core::ffi::c_str::CStr;
 
@@ -44,15 +45,28 @@ pub enum SerializableRef<'d> {
     LogMessage(&'d str),
 }
 
+/// Serializes one subevent-result event into the plain, non-COBS envelope bytes.
+///
+/// The shared serialization core of the FFI serializer's `use_cobs = false`
+/// path and the persisted-frame codec: both byte streams are this function's
+/// output, so the two cannot drift apart.
+pub(crate) fn serialize_subevent_result_event_bytes(event: &SubeventResultEvent) -> postcard::Result<Vec<u8>> {
+    to_allocvec(&SerializableRef::SubeventResultEvent(event))
+}
+
 /// Serialize a subevent result event to [`SerializedData`].
 #[ffi_export]
 pub extern "C" fn serialize_subevent_result_event(p_event: &SubeventResultEvent, use_cobs: bool) -> SerializedData {
     let event = SerializableRef::SubeventResultEvent(p_event);
 
     if use_cobs {
-        to_allocvec_cobs(&event).unwrap().into()
+        to_allocvec_cobs(&event)
+            .expect("subevent result event serializes")
+            .into()
     } else {
-        to_allocvec(&event).unwrap().into()
+        serialize_subevent_result_event_bytes(p_event)
+            .expect("subevent result event serializes")
+            .into()
     }
 }
 
