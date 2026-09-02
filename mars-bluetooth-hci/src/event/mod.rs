@@ -40,6 +40,12 @@ pub enum ParseError {
     /// Exceeded maximum step count.
     #[error("exceeded maximum step count")]
     ExceededMaxStepCount,
+    /// Exceeded the maximum antenna path count.
+    #[error("exceeded maximum antenna path count")]
+    ExceededMaxAntennaPathCount,
+    /// The message ended before the subevent header or step data it declares.
+    #[error("message too short: `{0}` bytes")]
+    TooShort(usize),
 }
 
 /// The relative frequency error compensation.

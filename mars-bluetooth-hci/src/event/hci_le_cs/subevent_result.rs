@@ -428,6 +428,23 @@ impl SubeventResultEvent {
         Self::parse_internal(message, origin)
     }
 
+    /// Checks the bounds the parser guarantees for every event it produces.
+    ///
+    /// The parser rejects messages whose step or antenna-path counts exceed
+    /// the fixed step array and the fixed antenna-path table, so no event it
+    /// returns can break these bounds. Producers of events from stored bytes
+    /// must re-validate so consumers indexing `steps[..step_count]` cannot
+    /// panic on a corrupted or foreign-encoder frame.
+    pub fn validate_invariants(&self) -> Result<(), ParseError> {
+        if self.step_count > MAX_NUM_STEPS_REPORTED {
+            return Err(ParseError::ExceededMaxStepCount);
+        }
+        if self.antenna_path_count > MAX_ANTENNA_PATH_COUNT {
+            return Err(ParseError::ExceededMaxAntennaPathCount);
+        }
+        Ok(())
+    }
+
     /// Return the expected Mode 2 step payload length for an antenna path count.
     fn mode2_len(antenna_path_count: usize) -> usize {
         let tone_count = antenna_path_count + 1;
@@ -603,10 +620,21 @@ impl SubeventResultEvent {
         let mut step_byte_offset = if self.has_initial_meta { 16 } else { 9 };
 
         for _ in 0..self.step_count {
+            let step_data_offset = 3 + step_byte_offset;
+            // The step header (mode, channel, length) runs through
+            // `step_data_offset - 1`.
+            if message.len() < step_data_offset {
+                return Err(ParseError::TooShort(message.len()));
+            }
             let step_mode = message[step_byte_offset];
             let step_channel = message[1 + step_byte_offset];
             let step_data_length = message[2 + step_byte_offset] as usize;
-            let step_data = &message[3 + step_byte_offset..3 + step_byte_offset + step_data_length];
+
+            let step_data_end = step_data_offset + step_data_length;
+            if message.len() < step_data_end {
+                return Err(ParseError::TooShort(message.len()));
+            }
+            let step_data = &message[step_data_offset..step_data_end];
 
             match step_mode {
                 step_mode::MODE_INVALID => {}
@@ -711,7 +739,16 @@ impl SubeventResultEvent {
     }
 
     /// Parse a subevent result or continuation message with the supplied origin.
+    ///
+    /// Malformed input — boot noise, a truncated buffer, or a hostile frame —
+    /// is rejected with an error instead of panicking: every message index is
+    /// length-guarded before it is read.
     fn parse_internal(message: &[u8], origin: Origin) -> Result<Self, ParseError> {
+        // The common header prefix (subevent code and connection handle) runs
+        // through index 2.
+        if message.len() < 3 {
+            return Err(ParseError::TooShort(message.len()));
+        }
         let connection_handle = u16::from_le_bytes(message[1..3].try_into()?);
         let connection_handle_is_cs_test = connection_handle == handle::CS_TEST_CONNECTION_HANDLE;
 
@@ -723,6 +760,10 @@ impl SubeventResultEvent {
 
         let mut event = match message[0] {
             le_subevent_code::CS_CONFIG_COMPLETE => {
+                // The config-complete header runs through index 15.
+                if message.len() < 16 {
+                    return Err(ParseError::TooShort(message.len()));
+                }
                 let (start_acl_conn_event_counter, has_start_acl_conn_event_counter) = if connection_handle_is_cs_test {
                     (0, false)
                 } else {
@@ -741,6 +782,11 @@ impl SubeventResultEvent {
                 let num_antenna_paths = message[14] as usize;
                 let num_steps_reported = message[15] as usize;
 
+                // The antenna-path count indexes the fixed Mode 2 tone tables
+                // and the step count indexes the fixed step array.
+                if num_antenna_paths > MAX_ANTENNA_PATH_COUNT {
+                    return Err(ParseError::ExceededMaxAntennaPathCount);
+                }
                 if num_steps_reported > MAX_NUM_STEPS_REPORTED {
                     return Err(ParseError::ExceededMaxStepCount);
                 }
@@ -775,6 +821,10 @@ impl SubeventResultEvent {
                 }
             }
             le_subevent_code::CS_SUBEVENT_RESULT_CONTINUE => {
+                // The continue header runs through index 8; steps follow from index 9.
+                if message.len() < 9 {
+                    return Err(ParseError::TooShort(message.len()));
+                }
                 let abort_reason = message[6];
                 let procedure = ProcedureInfo::from((message[4], abort_reason));
                 let subevent = SubeventInfo::from((message[5], abort_reason));
@@ -782,6 +832,11 @@ impl SubeventResultEvent {
                 let num_antenna_paths = message[7] as usize;
                 let num_steps_reported = message[8] as usize;
 
+                // The antenna-path count indexes the fixed Mode 2 tone tables
+                // and the step count indexes the fixed step array.
+                if num_antenna_paths > MAX_ANTENNA_PATH_COUNT {
+                    return Err(ParseError::ExceededMaxAntennaPathCount);
+                }
                 if num_steps_reported > MAX_NUM_STEPS_REPORTED {
                     return Err(ParseError::ExceededMaxStepCount);
                 }
@@ -884,17 +939,36 @@ pub(crate) mod test_messages {
     pub(crate) fn mode0_initiator_step_data(freq_lo: u8, freq_hi: u8) -> [u8; 5] {
         [0xA2, 0x34, 0x02, freq_lo, freq_hi]
     }
+
+    /// Mode 3 basic step data: the Mode 1 packet/timing section followed by the
+    /// Mode 2 tone section, the way the parser splits it.
+    pub(crate) fn mode3_basic_step_data() -> [u8; 15] {
+        let mut step_data = [0u8; 15];
+        step_data[..6].copy_from_slice(&mode1_basic_step_data(0x21, 0x12, 0x34));
+        step_data[6..].copy_from_slice(&mode2_step_data());
+        step_data
+    }
+
+    /// Mode 3 step data with packet phase correction terms: the Mode 1 PBR/RTT
+    /// section followed by the Mode 2 tone section.
+    pub(crate) fn mode3_pbr_rtt_step_data() -> [u8; 23] {
+        let mut step_data = [0u8; 23];
+        step_data[..14].copy_from_slice(&mode1_pbr_rtt_step_data(0x21, 0x12, 0x34));
+        step_data[14..].copy_from_slice(&mode2_step_data());
+        step_data
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::test_messages::{
         continue_event, mode0_initiator_step_data, mode0_reflector_step_data, mode1_basic_step_data,
-        mode1_pbr_rtt_step_data, mode2_step_data,
+        mode1_pbr_rtt_step_data, mode2_step_data, mode3_basic_step_data, mode3_pbr_rtt_step_data,
     };
     use super::{
         ModeRoleSpecificInfoKind, Origin, PhaseCorrectionTerm, RoundTripTimeRoleTimingKind, SubeventResultEvent,
     };
+    use crate::event::hci_le_cs::constants::le_subevent_code;
     use crate::event::{ExtensionSlot, ParseError, ToneQualityIndicator};
 
     #[test]
@@ -1001,8 +1075,7 @@ mod tests {
     fn test_mode3_step_stays_one_internal_step() {
         // Mode 3 = Mode 1 + Mode 2: under the collapsed schema, Mode 1 fields
         // are on info.mode1 and tone fields are on info.mode2.
-        let mut step_data = mode1_basic_step_data(0x21, 0x12, 0x34).to_vec();
-        step_data.extend_from_slice(&mode2_step_data());
+        let step_data = mode3_basic_step_data();
         let message = continue_event(0x03, 0x05, 0x01, &step_data);
 
         let event = SubeventResultEvent::try_from_with_origin(message.as_slice(), Origin::Initiator).unwrap();
@@ -1185,8 +1258,7 @@ mod tests {
     fn test_mode3_reflector_basic_is_parsed() {
         // Mode 3 = Mode 1 + Mode 2: under the collapsed schema, Mode 1 fields
         // are on info.mode1 and tone fields are on info.mode2.
-        let mut step_data = mode1_basic_step_data(0x21, 0x12, 0x34).to_vec();
-        step_data.extend_from_slice(&mode2_step_data());
+        let step_data = mode3_basic_step_data();
         let message = continue_event(0x03, 0x05, 0x01, &step_data);
 
         let event = SubeventResultEvent::try_from_with_origin(message.as_slice(), Origin::Reflector).unwrap();
@@ -1205,8 +1277,7 @@ mod tests {
     fn test_mode3_pbr_rtt_initiator_is_parsed() {
         // Mode 3 = Mode 1 + Mode 2: under the collapsed schema, Mode 1 fields
         // are on info.mode1 and tone fields are on info.mode2.
-        let mut step_data = mode1_pbr_rtt_step_data(0x21, 0x12, 0x34).to_vec();
-        step_data.extend_from_slice(&mode2_step_data());
+        let step_data = mode3_pbr_rtt_step_data();
         let message = continue_event(0x03, 0x05, 0x01, &step_data);
 
         let event = SubeventResultEvent::try_from_with_origin(message.as_slice(), Origin::Initiator).unwrap();
@@ -1223,8 +1294,7 @@ mod tests {
     fn test_mode3_pbr_rtt_reflector_is_parsed() {
         // Mode 3 = Mode 1 + Mode 2: under the collapsed schema, Mode 1 fields
         // are on info.mode1 and tone fields are on info.mode2.
-        let mut step_data = mode1_pbr_rtt_step_data(0x21, 0x12, 0x34).to_vec();
-        step_data.extend_from_slice(&mode2_step_data());
+        let step_data = mode3_pbr_rtt_step_data();
         let message = continue_event(0x03, 0x05, 0x01, &step_data);
 
         let event = SubeventResultEvent::try_from_with_origin(message.as_slice(), Origin::Reflector).unwrap();
@@ -1268,11 +1338,59 @@ mod tests {
 
     #[test]
     fn test_mode3_unknown_origin_is_rejected() {
-        let mut step_data = mode1_basic_step_data(0x21, 0x12, 0x34).to_vec();
-        step_data.extend_from_slice(&mode2_step_data());
+        let step_data = mode3_basic_step_data();
         let message = continue_event(0x03, 0x05, 0x01, &step_data);
 
         let error = SubeventResultEvent::try_from(message.as_slice()).unwrap_err();
         assert!(matches!(error, ParseError::UnknownOriginForMode(0x03)));
+    }
+
+    #[test]
+    fn short_messages_are_rejected_without_panicking() {
+        // Boot noise or a truncated buffer can produce short or empty messages;
+        // every message index is length-guarded before it is read.
+        for message in [
+            &[] as &[u8],
+            &[le_subevent_code::CS_SUBEVENT_RESULT_CONTINUE],
+            &[0x11, 0x01],
+        ] {
+            let error = SubeventResultEvent::try_from_with_origin(message, Origin::Initiator)
+                .expect_err("a message below the common header prefix is rejected");
+            assert!(matches!(error, ParseError::TooShort(_)));
+        }
+
+        // A continue header cut short (the header runs through index 8).
+        let message = continue_event(0x01, 0x05, 0x01, &mode1_basic_step_data(0x21, 0x12, 0x34));
+        let error = SubeventResultEvent::try_from_with_origin(&message[..8], Origin::Initiator)
+            .expect_err("a truncated continue header is rejected");
+        assert!(matches!(error, ParseError::TooShort(8)));
+
+        // A config-complete header cut short (the header runs through index 15).
+        let message = [le_subevent_code::CS_CONFIG_COMPLETE; 15];
+        let error = SubeventResultEvent::try_from_with_origin(&message, Origin::Initiator)
+            .expect_err("a truncated config-complete header is rejected");
+        assert!(matches!(error, ParseError::TooShort(15)));
+    }
+
+    #[test]
+    fn step_data_overruns_are_rejected_without_panicking() {
+        // The step header claims more step data than the message carries.
+        let mut message = continue_event(0x02, 0x05, 0x01, &mode2_step_data());
+        message[11] = 0xC8; // 200, beyond the bytes following the step header
+
+        let error = SubeventResultEvent::try_from_with_origin(message.as_slice(), Origin::Unknown)
+            .expect_err("a step-data overrun is rejected");
+        assert!(matches!(error, ParseError::TooShort(_)));
+    }
+
+    #[test]
+    fn antenna_path_counts_beyond_the_tone_tables_are_rejected() {
+        // Mode 2 tone fields exist for at most `MAX_ANTENNA_PATH_COUNT` antenna
+        // paths; a larger count used to index out of bounds during parsing.
+        let message = continue_event(0x02, 0x05, 0x05, &mode2_step_data());
+
+        let error = SubeventResultEvent::try_from_with_origin(message.as_slice(), Origin::Unknown)
+            .expect_err("an over-range antenna path count is rejected");
+        assert!(matches!(error, ParseError::ExceededMaxAntennaPathCount));
     }
 }

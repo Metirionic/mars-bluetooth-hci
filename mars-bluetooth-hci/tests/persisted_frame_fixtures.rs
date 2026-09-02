@@ -5,14 +5,19 @@
 //! so a new wire version adds only its fixtures and codec support, not another
 //! hand-maintained Rust fixture list.
 //!
-//! The retained version window mirrors the persisted-frame codec's dispatch:
-//! every fixture must decode through the descriptor its path declares, so a
-//! version directory may exist exactly while the codec retains that version's
-//! decoder arm. When the arm is removed after a migration, the fixture
-//! directory is removed in the same change.
+//! The retained version window mirrors the persisted-frame codec's dispatch
+//! in both directions: every fixture must decode through the descriptor its
+//! path declares, so a version directory may exist exactly while the codec
+//! retains that version's decoder arm — and every retained decoder arm must
+//! have its fixture directory (probed through decode itself, which rejects
+//! unsupported versions before reading bytes). When an arm is removed after a
+//! migration, the fixture directory is removed in the same change.
 //!
 //! The module is available in the default host configuration, mirroring the
-//! feature gate on the `persisted_frame` module itself.
+//! feature gate on the `persisted_frame` module itself
+//! (`mars-bluetooth-hci/src/event/hci_le_cs/mod.rs`): keep the two gates
+//! character-identical — editing one without the other silently compiles
+//! this suite to zero tests while CI stays green.
 #![cfg(all(feature = "std", feature = "alloc", feature = "libc"))]
 
 use std::collections::BTreeSet;
@@ -20,12 +25,18 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use mars_bluetooth_hci::event::hci_le_cs::persisted_frame::{
-    CS_SUBEVENT_FRAME_FORMAT, FrameDescriptor, current_frame_descriptor, decode, encode,
+    CS_SUBEVENT_FRAME_FORMAT, FrameCodecError, FrameDescriptor, current_frame_descriptor, decode, encode,
 };
 use mars_bluetooth_hci::event::hci_le_cs::subevent_result::{ModeRoleSpecificInfoKind, SubeventResultEvent};
 
 /// Fixture-root path relative to this crate's manifest directory.
+///
+/// Keep in sync with `FIXTURE_ROOT` in the codec's unit tests
+/// (`mars-bluetooth-hci/src/event/hci_le_cs/persisted_frame.rs`), which pin
+/// and regenerate the same layout from inside the crate.
 const FIXTURE_ROOT: &str = "tests/fixtures/persisted-frames";
+/// The first persisted frame version; no earlier version directory is valid.
+const FIRST_FRAME_VERSION: u16 = 1;
 /// Every retained codec version needs one representative frame per CS mode.
 const EXPECTED_STEP_MODES: [u8; 4] = [0, 1, 2, 3];
 
@@ -149,11 +160,31 @@ fn fixtures_at(root: &Path) -> Vec<Fixture> {
         versions.contains(&current_version),
         "fixtures contain the current codec version {current_version}"
     );
-    let source_version = current_version.checked_sub(1);
+    // The first persisted frame version has no migration source, so a `v0`
+    // directory has never been valid.
+    let source_version = current_version
+        .checked_sub(1)
+        .filter(|&version| version >= FIRST_FRAME_VERSION);
     for version in &versions {
         assert!(
             *version == current_version || Some(*version) == source_version,
             "fixture version {version} is the current version or its immediate migration source"
+        );
+    }
+
+    // The converse direction: every version the codec still decodes must have
+    // committed fixtures. Decode rejects unsupported versions before reading
+    // the bytes, so probing it with empty bytes reports exactly the versions
+    // with a retained decoder arm — the dispatch stays the single source of
+    // truth.
+    for version in FIRST_FRAME_VERSION..=current_version {
+        let retained = !matches!(
+            decode(FrameDescriptor::new(CS_SUBEVENT_FRAME_FORMAT, version), &[]),
+            Err(FrameCodecError::UnsupportedVersion { .. })
+        );
+        assert!(
+            !retained || versions.contains(&version),
+            "retained codec version {version} has committed fixtures"
         );
     }
 
@@ -289,6 +320,16 @@ mod fixture_layout_tests {
         let root = tempfile::tempdir().expect("temporary fixture root is created");
         write_fixture_set(root.path(), current_version(), &EXPECTED_STEP_MODES);
         write_fixture_set(root.path(), current_version() + 1, &EXPECTED_STEP_MODES);
+
+        let _ = fixtures_at(root.path());
+    }
+
+    #[test]
+    #[should_panic(expected = "immediate migration source")]
+    fn rejects_a_version_zero_directory() {
+        let root = tempfile::tempdir().expect("temporary fixture root is created");
+        write_fixture_set(root.path(), current_version(), &EXPECTED_STEP_MODES);
+        write_fixture_set(root.path(), 0, &EXPECTED_STEP_MODES);
 
         let _ = fixtures_at(root.path());
     }

@@ -5,7 +5,9 @@
 //! serializes through the same shared core as the FFI serializer's
 //! `use_cobs = false` path, so a persisted frame is exactly an FFI
 //! serialization envelope. The byte format is therefore jointly defined by the
-//! declaration order of `libc::Serializable` and the serde derives of
+//! declaration order of `libc::SerializableRef` — the order the owning
+//! `libc::Serializable` and the private decode mirror below match
+//! byte-identically — and the serde derives of
 //! [`SubeventResultEvent`](crate::event::hci_le_cs::subevent_result::SubeventResultEvent);
 //! changing either changes the persisted bytes, is caught by the committed
 //! golden fixtures, and requires a new declared version here. This module
@@ -44,6 +46,7 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use super::subevent_result::SubeventResultEvent;
+use crate::event::ParseError;
 use crate::libc::serialize_subevent_result_event_bytes;
 
 /// Stable format name for persisted CS subevent-result frames.
@@ -88,21 +91,14 @@ impl<'a> FrameDescriptor<'a> {
     }
 }
 
-/// Descriptor identifying the frame bytes that [`encode`] currently emits.
+/// Returns the descriptor identifying the frame bytes that [`encode`] emits.
 ///
 /// [`encode`] does not embed the descriptor or the version in the bytes: the
 /// caller persists this descriptor alongside the encoded frame (for example,
 /// in the storage record or file name) and passes the stored descriptor back
 /// to [`decode`].
-pub const CURRENT_CS_SUBEVENT_FRAME_DESCRIPTOR: FrameDescriptor<'static> =
-    FrameDescriptor::new(CS_SUBEVENT_FRAME_FORMAT, CURRENT_CS_SUBEVENT_FRAME_VERSION);
-
-/// Returns the descriptor identifying the frame bytes that [`encode`] emits.
-///
-/// See [`CURRENT_CS_SUBEVENT_FRAME_DESCRIPTOR`] for the out-of-band
-/// persistence contract.
 pub const fn current_frame_descriptor() -> FrameDescriptor<'static> {
-    CURRENT_CS_SUBEVENT_FRAME_DESCRIPTOR
+    FrameDescriptor::new(CS_SUBEVENT_FRAME_FORMAT, CURRENT_CS_SUBEVENT_FRAME_VERSION)
 }
 
 /// Errors returned while encoding or decoding persisted CS subevent-result frames.
@@ -118,14 +114,20 @@ pub enum FrameCodecError {
         version: u16,
     },
     /// Postcard could not encode the current frame representation.
-    #[error("could not encode persisted CS subevent frame: {0}")]
+    #[error("could not encode persisted CS subevent frame")]
     Encode(#[source] postcard::Error),
     /// Postcard could not decode the declared frame representation.
-    #[error("could not decode persisted CS subevent frame: {0}")]
+    ///
+    /// A truncated frame fails decode inside postcard and surfaces here.
+    #[error("could not decode persisted CS subevent frame")]
     Decode(#[source] postcard::Error),
     /// The frame decoded but left unconsumed trailing bytes.
     #[error("persisted CS subevent frame has trailing bytes")]
     TrailingBytes,
+    /// The frame decoded to an event that breaks an invariant no parsed event
+    /// can break; see [`SubeventResultEvent::validate_invariants`].
+    #[error("persisted CS subevent frame decodes to an event that violates the subevent-result invariants")]
+    InvalidEvent(#[source] ParseError),
     /// The decoded FFI transport value is not a CS subevent-result event.
     #[error("persisted CS subevent frame contains a different FFI value kind")]
     UnexpectedFrameKind,
@@ -165,11 +167,12 @@ pub fn decode(descriptor: FrameDescriptor<'_>, bytes: &[u8]) -> Result<SubeventR
 /// Private wire mirror of `libc::Serializable` for decoding persisted frames.
 ///
 /// Variant tags are serde declaration-order indices, so the variant order here
-/// must stay aligned with `libc::Serializable`'s; the golden fixtures and the
-/// `malformed_or_non_subevent_frames_are_rejected` test catch any drift. Unlike
-/// `Serializable`, the subevent variant is unboxed: postcard deserializes
-/// `Box<T>` and `T` to identical bytes, and the unboxed form returns the large
-/// event (~8 KB) without a heap allocation and without copying it back out.
+/// must stay aligned with `libc::Serializable`'s and `SerializableRef`'s; the
+/// golden fixtures and the `malformed_or_non_subevent_frames_are_rejected` test
+/// catch any drift. Unlike `Serializable`, the subevent variant is unboxed:
+/// postcard deserializes `Box<T>` and `T` to identical bytes, and the unboxed
+/// form returns the large event (~16 KB) without a heap allocation and without
+/// copying it back out.
 #[expect(
     clippy::large_enum_variant,
     reason = "boxing the subevent variant is exactly what this mirror avoids"
@@ -192,15 +195,21 @@ enum PersistedWireFrame<'d> {
 /// Decodes the first persisted-frame representation.
 ///
 /// The whole input must be one frame: leftover bytes mean a padded,
-/// part-written, or concatenated storage record, which is rejected instead of
-/// silently decoding its first frame.
+/// over-written, or concatenated storage record, which is rejected instead of
+/// silently decoding its first frame (a truncated record instead fails decode
+/// inside postcard with [`FrameCodecError::Decode`]). The decoded event must
+/// also satisfy the parser's invariants, so a corrupted frame cannot yield an
+/// event the parser could never produce.
 fn decode_v1(bytes: &[u8]) -> Result<SubeventResultEvent, FrameCodecError> {
     let (frame, trailing) = take_from_bytes(bytes).map_err(FrameCodecError::Decode)?;
     if !trailing.is_empty() {
         return Err(FrameCodecError::TrailingBytes);
     }
     match frame {
-        PersistedWireFrame::SubeventResultEvent(event) => Ok(event),
+        PersistedWireFrame::SubeventResultEvent(event) => {
+            event.validate_invariants().map_err(FrameCodecError::InvalidEvent)?;
+            Ok(event)
+        }
         PersistedWireFrame::LogMessage(_) => Err(FrameCodecError::UnexpectedFrameKind),
     }
 }
@@ -211,9 +220,13 @@ mod tests {
 
     use super::*;
     use crate::event::hci_le_cs::subevent_result::{Origin, test_messages};
-    use crate::libc::SerializableRef;
+    use crate::libc::{Serializable, SerializableRef};
 
     /// Committed-fixture root relative to this crate's manifest directory.
+    ///
+    /// Keep in sync with `FIXTURE_ROOT` in `tests/persisted_frame_fixtures.rs`,
+    /// which discovers the same layout from outside the crate (Rust's crate
+    /// model prevents sharing one definition).
     const FIXTURE_ROOT: &str = "tests/fixtures/persisted-frames";
 
     fn representative_event() -> SubeventResultEvent {
@@ -227,11 +240,8 @@ mod tests {
             .expect("representative event parses")
     }
 
-    /// Returns the representative events whose encodings are the committed V1
-    /// fixtures, one per CS Mode 0 through 3.
-    ///
-    /// Mode 3 combines the Mode 1 packet/timing section with the Mode 2 tone
-    /// section in one step, the way the parser decodes it.
+    /// Returns the representative events whose current-version encodings are
+    /// the committed current-version fixtures, one per CS Mode 0 through 3.
     fn representative_events_per_mode() -> Vec<(u8, SubeventResultEvent)> {
         let mode0 = SubeventResultEvent::try_from_with_origin(
             test_messages::continue_event(0x00, 0x05, 0x01, &test_messages::mode0_initiator_step_data(0x96, 0x00))
@@ -245,13 +255,8 @@ mod tests {
             Origin::Unknown,
         )
         .expect("representative Mode 2 event parses");
-        let mode3_step_data = [
-            test_messages::mode1_basic_step_data(0x21, 0x12, 0x34).as_slice(),
-            test_messages::mode2_step_data().as_slice(),
-        ]
-        .concat();
         let mode3 = SubeventResultEvent::try_from_with_origin(
-            test_messages::continue_event(0x03, 0x05, 0x01, &mode3_step_data).as_slice(),
+            test_messages::continue_event(0x03, 0x05, 0x01, &test_messages::mode3_basic_step_data()).as_slice(),
             Origin::Initiator,
         )
         .expect("representative Mode 3 event parses");
@@ -353,34 +358,91 @@ mod tests {
     }
 
     #[test]
-    fn representative_events_reproduce_the_committed_v1_fixtures() {
+    fn v1_frames_match_the_owned_boxed_ffi_envelope() {
+        let event = representative_event();
+
+        let boxed = to_allocvec(&Serializable::SubeventResultEvent(Box::new(event.clone())))
+            .expect("owned envelope serializes");
+        let persisted = encode(&event).expect("persisted serializer works");
+
+        assert_eq!(persisted, boxed);
+    }
+
+    #[test]
+    fn v1_decoding_rejects_events_with_broken_invariants() {
+        let event = representative_event();
+
+        // Step count past the fixed step array: splice the step-count varint
+        // (envelope offset 12 in the representative frame) into the varint
+        // for 1000.
+        let mut bytes = encode(&event).expect("persisted serializer works");
+        assert_eq!(
+            bytes[12], 0x01,
+            "the representative frame's step-count varint sits at envelope offset 12"
+        );
+        bytes.splice(12..13, [0xE8, 0x07]);
+        assert!(matches!(
+            decode(current_frame_descriptor(), &bytes),
+            Err(FrameCodecError::InvalidEvent(error)) if matches!(error, ParseError::ExceededMaxStepCount)
+        ));
+
+        // Antenna-path count past the fixed tone table: patch the
+        // antenna-path-count varint (envelope offset 11).
+        let mut bytes = encode(&event).expect("persisted serializer works");
+        assert_eq!(
+            bytes[11], 0x01,
+            "the representative frame's antenna-path-count varint sits at envelope offset 11"
+        );
+        bytes[11] = 0x05;
+        assert!(matches!(
+            decode(current_frame_descriptor(), &bytes),
+            Err(FrameCodecError::InvalidEvent(error)) if matches!(error, ParseError::ExceededMaxAntennaPathCount)
+        ));
+    }
+
+    #[test]
+    fn v1_decoding_rejects_truncated_frames() {
+        let event = representative_event();
+        let bytes = encode(&event).expect("persisted serializer works");
+
+        assert!(matches!(
+            decode(current_frame_descriptor(), &bytes[..bytes.len() / 2]),
+            Err(FrameCodecError::Decode(_))
+        ));
+    }
+
+    #[test]
+    fn representative_events_reproduce_the_committed_current_fixtures() {
         for (mode, event) in representative_events_per_mode() {
             let expected = encode(&event).expect("representative event encodes");
 
-            let hex =
-                std::fs::read_to_string(fixture_path(V1_CS_SUBEVENT_FRAME_VERSION, mode)).expect("fixture is readable");
+            let hex = std::fs::read_to_string(fixture_path(CURRENT_CS_SUBEVENT_FRAME_VERSION, mode))
+                .expect("fixture is readable");
             let committed = hex::decode(hex.trim()).expect("fixture contains valid hexadecimal Postcard bytes");
 
             assert_eq!(
                 expected, committed,
-                "the Mode {mode} representative event reproduces the committed V1 fixture"
+                "the Mode {mode} representative event reproduces the committed current-version fixture"
             );
         }
     }
 
-    /// Regenerates the committed V1 fixtures from the representative events.
+    /// Regenerates the committed current-version fixtures from the
+    /// representative events.
     ///
     /// Ignored because regenerating the compatibility fixtures is a
     /// deliberate, reviewed act: run
-    /// `cargo test -p mars-bluetooth-hci regenerate_committed_v1_fixtures -- --ignored --nocapture`
+    /// `cargo test -p mars-bluetooth-hci regenerate_committed_current_fixtures -- --ignored --nocapture`
     /// after a versioned representation change, then review the fixture diff
-    /// as the compatibility record of that change.
+    /// as the compatibility record of that change. Retained migration-source
+    /// fixture directories are never touched: they are removed together with
+    /// their decoder arm once the migration completes (ADR-0003).
     #[test]
     #[ignore = "regenerating fixtures is a deliberate, reviewed operation"]
-    fn regenerate_committed_v1_fixtures() {
+    fn regenerate_committed_current_fixtures() {
         let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(FIXTURE_ROOT)
-            .join(format!("v{}", V1_CS_SUBEVENT_FRAME_VERSION));
+            .join(format!("v{}", CURRENT_CS_SUBEVENT_FRAME_VERSION));
         std::fs::create_dir_all(&directory).expect("fixture directory is created");
 
         for (mode, event) in representative_events_per_mode() {

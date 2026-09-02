@@ -353,7 +353,9 @@ the versions with an explicit dispatch arm — normally only the current version
 release migration the immediately preceding version's decoder arm and fixture directory are
 retained, then removed together once the migration completes. The committed golden fixtures
 (`mars-bluetooth-hci/tests/fixtures/persisted-frames/vN/modeN.postcard.hex`, one per CS Mode
-0–3 per retained version, locked byte-for-byte to the current encoder) are the compatibility
+0–3 per retained version — current-version fixtures are locked byte-for-byte to the current
+encoder, while retained migration-source fixtures are decode-verified through their declared
+descriptor, since the current encoder no longer produces their bytes) are the compatibility
 record; any incompatible change requires a new declared version and an explicit migration
 transition.
 

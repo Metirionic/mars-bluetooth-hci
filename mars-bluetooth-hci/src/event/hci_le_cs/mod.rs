@@ -5,7 +5,9 @@ pub mod constants;
 /// Available in the default host configuration, which enables `std`, `alloc`,
 /// and the HCI FFI serialization surface. It is deliberately unavailable to
 /// the embedded no-std feature set. The persistence decision is recorded in
-/// ADR-0003.
+/// ADR-0003. The gate below is mirrored character-identically by the
+/// integration test `tests/persisted_frame_fixtures.rs` — keep the two in
+/// sync, or that suite silently compiles to zero tests.
 #[cfg(all(feature = "std", feature = "alloc", feature = "libc"))]
 pub mod persisted_frame;
 

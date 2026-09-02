@@ -20,7 +20,7 @@ use crate::event::hci_le_cs::subevent_result::SubeventResultEvent;
 /// The receiver side deserializes this enum and dispatches accordingly.
 ///
 /// The [`SubeventResultEvent`] variant is boxed to avoid placing the
-/// large struct (~8 KB) on the stack during deserialization.
+/// large struct (~16 KB) on the stack during deserialization.
 #[derive(Debug, Serialize, serde::Deserialize)]
 #[cfg(feature = "std")]
 pub enum Serializable<'d> {
@@ -35,7 +35,10 @@ pub enum Serializable<'d> {
 ///
 /// Uses references instead of owned/boxed values so the C/embedded side
 /// can serialize without cloning or heap-allocating the large event struct.
-/// Produces an identical wire format to [`Serializable`].
+/// Produces an identical wire format to [`Serializable`]. The persisted-frame
+/// codec encodes through this enum (via the shared
+/// `serialize_subevent_result_event_bytes` core) and decodes through a
+/// private, byte-identical mirror of it in `event::hci_le_cs::persisted_frame`.
 #[derive(Serialize)]
 pub enum SerializableRef<'d> {
     /// A CS subevent result from the HCI layer.
@@ -79,9 +82,9 @@ pub unsafe extern "C" fn serialize_log_message(p_log_message: *const c_char, use
     let message = SerializableRef::LogMessage(unsafe { CStr::from_ptr(p_log_message) }.to_str().unwrap_or_default());
 
     if use_cobs {
-        to_allocvec_cobs(&message).unwrap().into()
+        to_allocvec_cobs(&message).expect("log message serializes").into()
     } else {
-        to_allocvec(&message).unwrap().into()
+        to_allocvec(&message).expect("log message serializes").into()
     }
 }
 
