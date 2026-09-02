@@ -194,10 +194,13 @@ fn fixtures_at(root: &Path) -> Vec<Fixture> {
     // committed fixtures. Decode rejects unsupported versions before reading
     // the bytes, so probing it with empty bytes reports exactly the versions
     // with a retained decoder arm — the dispatch stays the single source of
-    // truth. This relies on a retained decoder never reporting
-    // `UnsupportedVersion` for its input: that error is reserved for the
-    // dispatch, and the codec's `retained_versions_match_the_decode_dispatch`
-    // unit test enforces the reservation behaviorally.
+    // truth. While the current version is also the first, this reduces to the
+    // current-version assert above; it earns its keep at the first migration,
+    // when a retained source-version arm must keep its fixture directory.
+    // This relies on a retained decoder never reporting `UnsupportedVersion`
+    // for its input: that error is reserved for the dispatch, and the codec's
+    // `retained_versions_match_the_decode_dispatch` unit test enforces the
+    // reservation behaviorally.
     for version in FIRST_CS_SUBEVENT_FRAME_VERSION..=current_version {
         let retained = !matches!(
             decode(FrameDescriptor::new(CS_SUBEVENT_FRAME_FORMAT, version), &[]),

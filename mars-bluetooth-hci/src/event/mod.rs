@@ -57,6 +57,16 @@ pub enum ParseError {
         /// The bytes actually available after the step header.
         available: usize,
     },
+    /// A step's payload kind does not carry the data its mode calls for.
+    #[error("step `{index}` has mode `{mode}` but payload kind `{kind:?}`")]
+    StepKindModeMismatch {
+        /// The zero-based index of the offending step slot.
+        index: usize,
+        /// The step's raw mode byte.
+        mode: u8,
+        /// The step's payload kind.
+        kind: crate::event::hci_le_cs::subevent_result::ModeRoleSpecificInfoKind,
+    },
 }
 
 /// The relative frequency error compensation.

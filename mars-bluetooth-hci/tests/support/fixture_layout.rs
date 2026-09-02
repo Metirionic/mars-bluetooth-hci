@@ -41,6 +41,12 @@ pub fn fixture_dir(manifest_dir: &std::path::Path, version: u16) -> std::path::P
     fixture_root(manifest_dir).join(version_dir_name(version))
 }
 
+/// Returns the path of one committed fixture file below a crate's manifest
+/// directory.
+pub fn fixture_path(manifest_dir: &std::path::Path, version: u16, file_name: &str) -> std::path::PathBuf {
+    fixture_dir(manifest_dir, version).join(file_name)
+}
+
 /// Reads and decodes one committed fixture's hexadecimal representation.
 pub fn read_fixture(path: &std::path::Path) -> Vec<u8> {
     let hex = std::fs::read_to_string(path).expect("fixture is readable");

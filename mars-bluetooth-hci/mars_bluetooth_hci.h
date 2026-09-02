@@ -210,7 +210,8 @@ SubeventAbortReason_t;
 /** \brief
  *  Discriminant for [`ModeRoleSpecificInfo`].
  *
- *  The parser populates Mode 0, Mode 1, Mode 2, and Mode 3 variants.
+ *  The parser populates Mode 0, Mode 1, Mode 2, Mode 3, and `Invalid` (the
+ *  0xFF sentinel) variants.
  */
 /** \remark Has the same ABI as `uint8_t` **/
 #ifdef DOXYGEN
@@ -269,8 +270,11 @@ enum ModeRoleSpecificInfoKind {
      *
      *  Appended at the end to preserve the existing wire values of the
      *  variants above. Old readers cannot deserialize frames that carry this
-     *  kind — the same trade-off as every appended variant, governed by the
-     *  persisted-frame version policy.
+     *  kind — the same trade-off as every appended variant. On the UART wire
+     *  path that compatibility is governed by the tag-co-pinning policy of
+     *  [wire-format.md](../../docs/wire-format.md) §Versioning and
+     *  compatibility; for stored frames, by the persisted-frame version
+     *  policy.
      */
     MODE_ROLE_SPECIFIC_INFO_KIND_INVALID,
 }

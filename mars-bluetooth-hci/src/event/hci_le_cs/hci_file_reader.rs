@@ -146,9 +146,17 @@ mod tests {
 
         let result = std::panic::catch_unwind(|| read_file(&path));
 
+        let message = match result {
+            Err(payload) => payload
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
+                .unwrap_or_default(),
+            Ok(_) => panic!("a glued multi-byte token must not be silently truncated"),
+        };
         assert!(
-            result.is_err(),
-            "a glued multi-byte token must not be silently truncated"
+            message.contains("encodes exactly one byte"),
+            "the token-length guard must reject the token, not a downstream parse: {message}"
         );
     }
 }

@@ -4,7 +4,6 @@ extern crate alloc;
 use alloc::vec::Vec;
 use core::ffi::c_char;
 use core::ffi::c_str::CStr;
-use core::mem::size_of;
 
 use mars_common::libc::serialize::SerializedData;
 use postcard::{to_allocvec, to_allocvec_cobs, to_extend};
@@ -20,8 +19,10 @@ use crate::event::hci_le_cs::subevent_result::SubeventResultEvent;
 /// log messages into a uniform byte stream (via [`postcard`]).
 /// The receiver side deserializes this enum and dispatches accordingly.
 ///
-/// The [`SubeventResultEvent`] variant is boxed to avoid placing the
-/// large struct (~16 KB) on the stack during deserialization.
+/// The [`SubeventResultEvent`] variant is boxed so a `Serializable` value
+/// does not itself carry the full ~16 KB step array; note that serde still
+/// builds the inner value on the stack before boxing, so deserializing a
+/// subevent-result frame needs far more stack than the event's size.
 #[derive(Debug, Serialize, serde::Deserialize)]
 #[cfg(feature = "std")]
 pub enum Serializable<'d> {
@@ -58,11 +59,12 @@ pub enum SerializableRef<'d> {
 /// `encode` validates, while the FFI serializer serializes whatever C built
 /// and a count-invalid event's bytes are rejected by the codec's replay gate.
 pub(crate) fn serialize_subevent_result_event_bytes(event: &SubeventResultEvent) -> postcard::Result<Vec<u8>> {
-    // The fixed step array dominates the frame: one allocation sized to the
-    // in-memory event (plus slack for the varint-encoded fields) avoids
-    // postcard's grow-by-doubling reallocations while serializing ~13 KB per
-    // frame. The bytes are identical to `to_allocvec`'s.
-    let buffer = Vec::with_capacity(size_of::<SubeventResultEvent>() + 64);
+    // The fixed step array dominates the frame: one allocation comfortably
+    // above the ~13.3 KB serialized size avoids postcard's grow-by-doubling
+    // reallocations. Underestimating is safe — `to_extend` grows the buffer —
+    // and postcard's varint encoding keeps the frame below the in-memory
+    // event's size. The bytes are identical to `to_allocvec`'s.
+    let buffer = Vec::with_capacity(14 * 1024);
     to_extend(&SerializableRef::SubeventResultEvent(event), buffer)
 }
 

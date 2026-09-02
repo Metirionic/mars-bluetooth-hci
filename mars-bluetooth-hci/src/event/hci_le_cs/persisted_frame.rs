@@ -42,10 +42,11 @@
 //! change the bytes and therefore requires a new declared version.
 //!
 //! Stack cost: `decode` builds the decoded event on the stack — serde
-//! deserializes the fixed-array event by value, which needs roughly 100 KB of
-//! stack per call in release builds (and far more in debug). Spawn replay
-//! workers with an adequate stack; boxing the envelope variant does not avoid
-//! this, because serde builds the inner value on the stack before boxing.
+//! deserializes the fixed-array event by value, which needs more than
+//! 100 KB of stack per call in release builds (measured to abort at ~117 KB
+//! and succeed at ~118 KB; far more in debug). Spawn replay workers with an
+//! adequate stack; boxing the envelope variant does not avoid this, because
+//! serde builds the inner value on the stack before boxing.
 
 extern crate alloc;
 
@@ -203,11 +204,13 @@ pub fn decode(descriptor: FrameDescriptor<'_>, bytes: &[u8]) -> Result<SubeventR
 /// Private wire mirror of `libc::Serializable` for decoding persisted frames.
 ///
 /// Variant tags are serde declaration-order indices, so the variant order here
-/// must stay aligned with `libc::Serializable`'s and `SerializableRef`'s; the
-/// golden fixtures and the `malformed_or_non_subevent_frames_are_rejected` test
-/// catch any drift. Unlike `Serializable`, the subevent variant is unboxed:
-/// postcard deserializes `Box<T>` and `T` to identical bytes, and the unboxed
-/// form returns the large event (~16 KB) without a heap allocation and without
+/// must stay aligned with `libc::Serializable`'s and `SerializableRef`'s. A
+/// new envelope kind is a wire change requiring a new declared version and a
+/// raised pre-check bound in [`decode_v1`] — the
+/// `malformed_or_non_subevent_frames_are_rejected` test pins the bound's
+/// behavior. Unlike `Serializable`, the subevent variant is unboxed: postcard
+/// deserializes `Box<T>` and `T` to identical bytes, and the unboxed form
+/// returns the large event (~16 KB) without a heap allocation and without
 /// copying it back out.
 #[expect(
     clippy::large_enum_variant,
@@ -232,12 +235,15 @@ enum PersistedWireFrame<'d> {
 ///
 /// The whole input must be one frame: leftover bytes mean a padded,
 /// over-written, or concatenated storage record, which is rejected instead of
-/// silently decoding its first frame (a truncated record — or one damaged
-/// anywhere inside the fixed step array, including its unreported tail —
-/// fails decode inside postcard with [`FrameCodecError::Decode`]). The
-/// decoded event must satisfy the count bounds of
+/// silently decoding its first frame. A truncated record — or one damaged in
+/// a way that breaks the payload enums' encoding, such as a corrupted
+/// step-kind tag in the unreported tail — fails decode inside postcard with
+/// [`FrameCodecError::Decode`]. Length-preserving corruption of measurement
+/// values decodes silently: postcard defines no integrity check, and adding
+/// one would change the bytes, so integrity protection is the storage layer's
+/// concern. The decoded event must satisfy the invariants of
 /// [`SubeventResultEvent::validate_invariants`]; deeper semantic consistency
-/// of the stored event is not re-derived.
+/// of a structurally intact record is not re-derivable.
 ///
 /// The event is built on the stack during deserialization: see the module
 /// docs for the stack size replay workers need.
@@ -273,7 +279,8 @@ mod tests {
     use postcard::to_allocvec;
 
     use super::fixture_support::{
-        CONFIG_COMPLETE_FIXTURE_FILE, REPRESENTATIVE_STEP_MODES, fixture_dir, fixture_file_name, read_fixture,
+        CONFIG_COMPLETE_FIXTURE_FILE, REPRESENTATIVE_STEP_MODES, fixture_dir, fixture_file_name, fixture_path,
+        read_fixture,
     };
     use super::*;
     use crate::event::hci_le_cs::subevent_result::{
@@ -338,10 +345,9 @@ mod tests {
             .expect("representative config-complete event parses")
     }
 
-    /// Returns the path of one committed fixture file.
-    fn fixture_path(version: u16, file_name: &str) -> std::path::PathBuf {
-        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        fixture_dir(manifest, version).join(file_name)
+    /// Returns the crate's manifest directory.
+    fn manifest_dir() -> &'static std::path::Path {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
     }
 
     /// Verifies the FFI serializer wrapper stays wired to the shared
@@ -386,6 +392,30 @@ mod tests {
             decoded.steps[3].info.kind,
             ModeRoleSpecificInfoKind::Mode3ReflectorPbrRtt
         );
+    }
+
+    #[test]
+    fn encoding_and_decoding_reject_fabricated_pre_migration_steps() {
+        // A pre-PR build parsed a 0xFF slot by collapsing it, leaving a
+        // fabricated default step (mode 0x00, kind Mode2) inside the step
+        // window; replaying such a record must fail loudly instead of
+        // returning fabricated measurement data.
+        let mut event = representative_event();
+        event.steps[1] = crate::event::hci_le_cs::subevent_result::Step {
+            mode: 0x00,
+            channel: 0x05,
+            info: crate::event::hci_le_cs::subevent_result::ModeRoleSpecificInfo {
+                kind: ModeRoleSpecificInfoKind::Mode2,
+                ..Default::default()
+            },
+        };
+        event.step_count = 2;
+
+        assert!(matches!(
+            encode(&event),
+            Err(FrameCodecError::InvalidEvent(error))
+                if matches!(error, ParseError::StepKindModeMismatch { index: 1, mode: 0x00, .. })
+        ));
     }
 
     #[test]
@@ -621,7 +651,11 @@ mod tests {
     fn representative_frames_reproduce_the_committed_current_fixtures() {
         for (file_name, event) in representative_fixtures() {
             let expected = encode(&event).expect("representative event encodes");
-            let committed = read_fixture(&fixture_path(CURRENT_CS_SUBEVENT_FRAME_VERSION, &file_name));
+            let committed = read_fixture(&fixture_path(
+                manifest_dir(),
+                CURRENT_CS_SUBEVENT_FRAME_VERSION,
+                &file_name,
+            ));
 
             assert_eq!(
                 expected, committed,
@@ -643,10 +677,7 @@ mod tests {
     #[test]
     #[ignore = "regenerating fixtures is a deliberate, reviewed operation"]
     fn regenerate_committed_current_fixtures() {
-        let directory = fixture_dir(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
-            CURRENT_CS_SUBEVENT_FRAME_VERSION,
-        );
+        let directory = fixture_dir(manifest_dir(), CURRENT_CS_SUBEVENT_FRAME_VERSION);
         std::fs::create_dir_all(&directory).expect("fixture directory is created");
 
         for (file_name, event) in representative_fixtures() {

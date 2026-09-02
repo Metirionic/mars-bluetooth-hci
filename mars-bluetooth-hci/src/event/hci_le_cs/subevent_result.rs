@@ -260,7 +260,8 @@ impl Mode2 {
 
 /// Discriminant for [`ModeRoleSpecificInfo`].
 ///
-/// The parser populates Mode 0, Mode 1, Mode 2, and Mode 3 variants.
+/// The parser populates Mode 0, Mode 1, Mode 2, Mode 3, and `Invalid` (the
+/// 0xFF sentinel) variants.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[derive_ReprC]
 #[repr(u8)]
@@ -295,8 +296,11 @@ pub enum ModeRoleSpecificInfoKind {
     ///
     /// Appended at the end to preserve the existing wire values of the
     /// variants above. Old readers cannot deserialize frames that carry this
-    /// kind — the same trade-off as every appended variant, governed by the
-    /// persisted-frame version policy.
+    /// kind — the same trade-off as every appended variant. On the UART wire
+    /// path that compatibility is governed by the tag-co-pinning policy of
+    /// [wire-format.md](../../docs/wire-format.md) §Versioning and
+    /// compatibility; for stored frames, by the persisted-frame version
+    /// policy.
     Invalid,
 }
 
@@ -482,15 +486,28 @@ impl SubeventResultEvent {
         Self::parse_internal(message, origin)
     }
 
-    /// Checks the bounds the parser guarantees for every event it produces.
+    /// Checks the invariants the parser guarantees for every event it
+    /// produces.
     ///
     /// The parser rejects messages whose step or antenna-path counts exceed
-    /// the fixed step array and the fixed antenna-path table, so no event it
-    /// returns can break these bounds. Producers of events from stored bytes
-    /// must re-validate so consumers indexing `steps[..step_count]` cannot
-    /// panic on a corrupted or foreign-encoder frame.
+    /// the fixed step array and the fixed antenna-path table, and populates
+    /// every reported step with a payload kind that carries its mode's data,
+    /// so no event it returns can break these bounds. Producers of events
+    /// from stored bytes must re-validate so consumers indexing
+    /// `steps[..step_count]` cannot panic on — or mistake — a corrupted or
+    /// foreign-encoder frame.
     pub fn validate_invariants(&self) -> Result<(), ParseError> {
-        check_counts(self.antenna_path_count, self.step_count)
+        check_counts(self.antenna_path_count, self.step_count)?;
+        for (index, step) in self.steps[..self.step_count].iter().enumerate() {
+            if step.info.kind.mode() != step.mode {
+                return Err(ParseError::StepKindModeMismatch {
+                    index,
+                    mode: step.mode,
+                    kind: step.info.kind,
+                });
+            }
+        }
+        Ok(())
     }
 
     /// Return the expected Mode 2 step payload length for an antenna path count.
@@ -858,8 +875,6 @@ impl SubeventResultEvent {
                 let num_antenna_paths = message[14] as usize;
                 let num_steps_reported = message[15] as usize;
 
-                check_counts(num_antenna_paths, num_steps_reported)?;
-
                 SubeventResultEvent {
                     origin,
                     local_mac: 0,
@@ -902,8 +917,6 @@ impl SubeventResultEvent {
                 let num_antenna_paths = message[7] as usize;
                 let num_steps_reported = message[8] as usize;
 
-                check_counts(num_antenna_paths, num_steps_reported)?;
-
                 SubeventResultEvent {
                     origin,
                     local_mac: 0,
@@ -932,6 +945,7 @@ impl SubeventResultEvent {
             }
         };
 
+        check_counts(event.antenna_path_count, event.step_count)?;
         event.push_steps(message)?;
 
         Ok(event)
@@ -1456,6 +1470,16 @@ mod tests {
         assert_eq!(mode2.mode, step_mode::MODE_2);
         assert_eq!(mode2.info.kind, ModeRoleSpecificInfoKind::Mode2);
         assert_eq!(mode2.info.mode2.antenna_permutation_index, 9);
+
+        // The sentinel round-trips through the persisted representation, so
+        // the new kind's wire value is pinned.
+        let bytes = crate::event::hci_le_cs::persisted_frame::encode(&event).expect("sentinel event encodes");
+        let decoded = crate::event::hci_le_cs::persisted_frame::decode(
+            crate::event::hci_le_cs::persisted_frame::current_frame_descriptor(),
+            &bytes,
+        )
+        .expect("sentinel event decodes");
+        assert_eq!(decoded.steps[0].info.kind, ModeRoleSpecificInfoKind::Invalid);
     }
 
     #[test]
