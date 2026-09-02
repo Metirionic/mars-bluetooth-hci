@@ -5,8 +5,6 @@
 //! so a new wire version adds only its fixtures and codec support, not another
 //! hand-maintained Rust fixture list.
 
-#![cfg(feature = "persisted-frame")]
-
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};

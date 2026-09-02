@@ -1,7 +1,11 @@
 pub mod constants;
 
 /// Versioned persistence contract for decoded CS subevent-result frames.
-#[cfg(feature = "persisted-frame")]
+///
+/// Available in the default host configuration, which enables `std`, `alloc`,
+/// and the HCI FFI serialization surface. It is deliberately unavailable to
+/// the embedded no-std feature set.
+#[cfg(all(feature = "std", feature = "alloc", feature = "libc"))]
 pub mod persisted_frame;
 
 pub mod subevent_result;

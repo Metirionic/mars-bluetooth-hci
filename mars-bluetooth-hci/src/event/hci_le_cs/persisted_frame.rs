@@ -4,7 +4,6 @@
 //! by MARS. It deliberately does not expose the general FFI serialization enum
 //! as a persistence contract.
 //!
-//! Version 1 preserves the current HCI Postcard event representation exactly.
 //! An incompatible change to persisted bytes or their interpretation requires a
 //! new declared version, compatibility fixtures, and an explicit migration
 //! transition. Normal operation encodes the current version and replays only
