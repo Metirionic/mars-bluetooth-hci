@@ -48,6 +48,10 @@ _Avoid_: serializer, encode side, encoder library
 The closed-source deserialize side of the MARS data path — the `mars-ranging-demo` GUI — which consumes the wire format this repository defines (see [docs/ecosystem.md](docs/ecosystem.md), [docs/wire-format.md](docs/wire-format.md)).
 _Avoid_: deserializer, decode side, eval app, GUI
 
+**Persisted frame**:
+A decoded CS subevent-result frame stored through the versioned persistence contract (`persisted_frame`), byte-compatible with the non-COBS wire representation and versioned out-of-band by its frame descriptor (see [ADR-0003](docs/adr/0003-versioned-persisted-frame-codec.md)); its replay decode is in-repo storage-side code, not the closed-source Decoder, which remains the UART-path decoder.
+_Avoid_: recorded frame, saved frame, storage blob
+
 ## Glossary gaps
 
 The C/embedded integration guide uses a few integration-mechanics terms that are

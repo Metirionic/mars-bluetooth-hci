@@ -24,7 +24,10 @@ Because the downstream decoder (`mars-ranging-demo`) is closed-source, **this do
 canonical contract** for the wire format. The closed-source evaluation-app decoder and any
 third-party decoder MUST conform to the format defined here. This repo is encode-only and is
 the authoritative source for the contract (ADR-0001); ADR-0001 owns the *why* (the decision),
-this document owns the *what* (the byte-level layout, framing, and decode procedure).
+this document owns the *what* (the byte-level layout, framing, and decode procedure). That
+encode-only boundary belongs to the UART wire path; persisted-frame storage replay is a
+separate, versioned contract with an in-repo decoder
+([ADR-0003](adr/0003-versioned-persisted-frame-codec.md)).
 
 ## The envelope
 
@@ -64,6 +67,10 @@ first byte of every frame is the variant tag. The only `version` / `BINARY_FORMA
 this repo (`mars-common/src/serde.rs`) belongs to a *separate* recording-file container
 (`BinaryData`) for timestamped raw blobs — it is not part of this envelope. Versioning is
 handled out-of-band; see [Versioning and compatibility](#versioning-and-compatibility) below.
+Persisted (non-COBS, storage-side) frames **are** versioned out-of-band, through the frame
+descriptor of the persisted-frame codec
+([ADR-0003](adr/0003-versioned-persisted-frame-codec.md)); the UART envelope itself remains
+without an in-band version pending #15.
 
 ## Encoding: postcard + COBS
 
@@ -336,6 +343,20 @@ contract and does not pre-empt that decision; any future change to the envelope 
 be a wire-format-breaking change governed by the same tag-co-pinning model until an in-band
 version mechanism exists.
 
+Persisted frames version independently of that tag-co-pinning model: the persisted-frame
+codec (`mars-bluetooth-hci/src/event/hci_le_cs/persisted_frame.rs`;
+[ADR-0003](adr/0003-versioned-persisted-frame-codec.md)) declares its format name and version
+out-of-band in a `FrameDescriptor` that the caller stores alongside the frame bytes — the
+bytes themselves are the `use_cobs=false` representation above, still with no in-band
+version, and `decode` dispatches only on the declared descriptor. `decode` accepts exactly
+the versions with an explicit dispatch arm — normally only the current version; during a
+release migration the immediately preceding version's decoder arm and fixture directory are
+retained, then removed together once the migration completes. The committed golden fixtures
+(`mars-bluetooth-hci/tests/fixtures/persisted-frames/vN/modeN.postcard.hex`, one per CS Mode
+0–3 per retained version, locked byte-for-byte to the current encoder) are the compatibility
+record; any incompatible change requires a new declared version and an explicit migration
+transition.
+
 ## Related documents
 
 - [ecosystem.md](ecosystem.md) — the three-repo WHAT and the ecosystem data-flow diagram.
@@ -343,6 +364,7 @@ version mechanism exists.
 - [c-embedded-integration.md](c-embedded-integration.md) — the integrator HOW-TO that produces the bytes specified by this contract.
 - [adr/0001-wire-format-postcard-cobs.md](adr/0001-wire-format-postcard-cobs.md) — the WHY: the postcard + COBS decision, the `0x00` sentinel, the `use_cobs=false` unframed variant, and the encode-only / decode-closed boundary.
 - [adr/0002-serialize-only-ffi.md](adr/0002-serialize-only-ffi.md) — the serialize-only C FFI decision.
+- [adr/0003-versioned-persisted-frame-codec.md](adr/0003-versioned-persisted-frame-codec.md) — the versioned persisted-frame storage-replay codec decision (out-of-band `FrameDescriptor` versioning, V1 byte-compatible with the `use_cobs=false` representation).
 - [../CONTRIBUTING.md](../CONTRIBUTING.md) §6 — the documentation structure and Mermaid convention.
 - [../mars-bluetooth-hci/mars_bluetooth_hci.h](../mars-bluetooth-hci/mars_bluetooth_hci.h) — the generated C header; canonical source for field order and types (note the C-ABI ≠ wire caveat in [Payloads](#subeventresultevent-tag-0x00) and [Decoder notes](#enum-tags-are-declaration-order-not-c-repr-discriminants)).
 - [postcard crate docs](https://docs.rs/postcard/1.1.3/) — the normative reference for primitive byte-level encoding.
