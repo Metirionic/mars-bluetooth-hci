@@ -4,9 +4,10 @@ extern crate alloc;
 use alloc::vec::Vec;
 use core::ffi::c_char;
 use core::ffi::c_str::CStr;
+use core::mem::size_of;
 
 use mars_common::libc::serialize::SerializedData;
-use postcard::{to_allocvec, to_allocvec_cobs};
+use postcard::{to_allocvec, to_allocvec_cobs, to_extend};
 use safer_ffi::ffi_export;
 use serde::Serialize;
 
@@ -54,7 +55,12 @@ pub enum SerializableRef<'d> {
 /// path and the persisted-frame codec: both byte streams are this function's
 /// output, so the two cannot drift apart.
 pub(crate) fn serialize_subevent_result_event_bytes(event: &SubeventResultEvent) -> postcard::Result<Vec<u8>> {
-    to_allocvec(&SerializableRef::SubeventResultEvent(event))
+    // The fixed step array dominates the frame: one allocation sized to the
+    // in-memory event (plus slack for the varint-encoded fields) avoids
+    // postcard's grow-by-doubling reallocations while serializing ~13 KB per
+    // frame. The bytes are identical to `to_allocvec`'s.
+    let buffer = Vec::with_capacity(size_of::<SubeventResultEvent>() + 64);
+    to_extend(&SerializableRef::SubeventResultEvent(event), buffer)
 }
 
 /// Serialize a subevent result event to [`SerializedData`].

@@ -31,16 +31,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use fixture_support::{
-    CONFIG_COMPLETE_FIXTURE_FILE, FIXTURE_ROOT, REPRESENTATIVE_STEP_MODES, fixture_file_name, read_fixture,
+    CONFIG_COMPLETE_FIXTURE_FILE, REPRESENTATIVE_STEP_MODES, fixture_file_name, fixture_root, read_fixture,
     version_dir_name,
 };
 use mars_bluetooth_hci::event::hci_le_cs::persisted_frame::{
-    CS_SUBEVENT_FRAME_FORMAT, FrameCodecError, FrameDescriptor, current_frame_descriptor, decode, encode,
+    CS_SUBEVENT_FRAME_FORMAT, FIRST_CS_SUBEVENT_FRAME_VERSION, FrameCodecError, FrameDescriptor,
+    current_frame_descriptor, decode, encode,
 };
 use mars_bluetooth_hci::event::hci_le_cs::subevent_result::SubeventResultEvent;
-
-/// The first persisted frame version; no earlier version directory is valid.
-const FIRST_FRAME_VERSION: u16 = 1;
 
 /// One fixture discovered from its version directory and filename.
 #[derive(Debug)]
@@ -53,8 +51,8 @@ struct Fixture {
 }
 
 /// Returns the absolute fixture-root path for this test invocation.
-fn fixture_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join(FIXTURE_ROOT)
+fn fixture_root_path() -> PathBuf {
+    fixture_root(Path::new(env!("CARGO_MANIFEST_DIR")))
 }
 
 /// Extracts the explicitly declared codec version from a `vN` directory.
@@ -184,7 +182,7 @@ fn fixtures_at(root: &Path) -> Vec<Fixture> {
     // directory has never been valid.
     let source_version = current_version
         .checked_sub(1)
-        .filter(|&version| version >= FIRST_FRAME_VERSION);
+        .filter(|&version| version >= FIRST_CS_SUBEVENT_FRAME_VERSION);
     for version in &versions {
         assert!(
             *version == current_version || Some(*version) == source_version,
@@ -199,7 +197,7 @@ fn fixtures_at(root: &Path) -> Vec<Fixture> {
     // truth. This relies on a retained decoder never reporting
     // `UnsupportedVersion` for its input: that error is reserved for the
     // dispatch itself.
-    for version in FIRST_FRAME_VERSION..=current_version {
+    for version in FIRST_CS_SUBEVENT_FRAME_VERSION..=current_version {
         let retained = !matches!(
             decode(FrameDescriptor::new(CS_SUBEVENT_FRAME_FORMAT, version), &[]),
             Err(FrameCodecError::UnsupportedVersion { .. })
@@ -215,7 +213,7 @@ fn fixtures_at(root: &Path) -> Vec<Fixture> {
 
 /// Discovers fixtures committed with this crate.
 fn fixtures() -> Vec<Fixture> {
-    fixtures_at(&fixture_root())
+    fixtures_at(&fixture_root_path())
 }
 
 /// Decodes one fixture using exactly the descriptor declared by its path.

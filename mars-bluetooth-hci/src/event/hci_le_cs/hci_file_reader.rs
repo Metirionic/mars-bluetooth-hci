@@ -43,9 +43,12 @@ fn read_lines<P: AsRef<Path>>(path: P) -> io::Result<io::Lines<io::BufReader<Fil
 ///
 /// # Panics
 ///
-/// Panics if the file cannot be read, a line is not valid hexadecimal, or an
-/// event's bytes do not parse (see [`crate::event::ParseError`]) — malformed
-/// input is not silently skipped.
+/// Panics if the file cannot be read, a data token is not valid hexadecimal
+/// or does not encode exactly one byte, or an event's bytes do not parse (see
+/// [`crate::event::ParseError`]). Structural malformation of the text itself —
+/// a data line with no preceding `event:` header, an unrecognized node label,
+/// or a dangling label at the end of the file — is silently skipped, so a
+/// truncated capture yields fewer events than the file holds.
 pub fn read_file(path: &PathBuf) -> Vec<SubeventResultEvent> {
     /// The state of reading the input text file.
     enum ReadState {

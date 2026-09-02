@@ -32,7 +32,7 @@ separate, versioned contract with an in-repo decoder
 ## The envelope
 
 The unit of serialization is the externally-tagged `SerializableRef` / `Serializable` enum
-defined in `mars-bluetooth-hci/src/libc.rs:26-48`. It has two variants:
+defined in `mars-bluetooth-hci/src/libc.rs:27-49`. It has two variants:
 
 - `SubeventResultEvent` — a CS subevent result (declaration index 0).
 - `LogMessage` — a firmware log message, borrowing a C string (declaration index 1).
@@ -41,7 +41,7 @@ defined in `mars-bluetooth-hci/src/libc.rs:26-48`. It has two variants:
 deserializable, `#[cfg(feature = "std")]`) produce an **identical wire format**: both wrap
 the same inner value (`&SubeventResultEvent` vs `Box<SubeventResultEvent>`, `&str` vs `&str`),
 which postcard serializes identically regardless of the borrow/own wrapping. The
-`log_message_wire_format_matches` test (`libc.rs:95-101`) asserts this for the `LogMessage`
+`log_message_wire_format_matches` test (`libc.rs:101-107`) asserts this for the `LogMessage`
 variant; the `SubeventResultEvent` variant follows from the same wrapping-irrelevant rule. A
 decoder deserializes into the owning `Serializable` enum and dispatches on the variant.
 
@@ -57,8 +57,8 @@ via `serialize_newtype_variant` (postcard `src/ser/serializer.rs:246-259`: it pu
 
 | Wire tag | Variant | Payload | Source |
 |---|---|---|---|
-| `0x00` | `SubeventResultEvent` | the struct's fields, concatenated in declaration order | `libc.rs:28`, `45` |
-| `0x01` | `LogMessage` | varint byte-length prefix + raw UTF-8 bytes (`&str`) | `libc.rs:31`, `48` |
+| `0x00` | `SubeventResultEvent` | the struct's fields, concatenated in declaration order | `libc.rs:29`, `46` |
+| `0x01` | `LogMessage` | varint byte-length prefix + raw UTF-8 bytes (`&str`) | `libc.rs:32`, `49` |
 
 ### No in-band version or magic byte
 
@@ -102,7 +102,7 @@ Two structural rules load-bearing for this format:
 ### COBS byte-stuffing and the trailing 0x00 delimiter
 
 The `use_cobs=true` path encodes with `postcard::to_allocvec_cobs`
-(`mars-bluetooth-hci/src/libc.rs:66`, `85`), which fuses serde serialization, COBS
+(`mars-bluetooth-hci/src/libc.rs:72`, `91`), which fuses serde serialization, COBS
 byte-stuffing, and a trailing `0x00` sentinel into a single call. COBS guarantees the encoded
 body contains **no zero bytes** (postcard `src/ser/flavors.rs:508-510`); the trailing `0x00`
 is appended by postcard's `Cobs` flavor `finalize` (`flavors.rs:561-566`; `src/ser/mod.rs:233`
@@ -143,7 +143,7 @@ writes the returned buffer to UART and then frees it with `drop_bin` (see
 
 ### use_cobs=false (unframed / non-streaming)
 
-The `use_cobs=false` path uses `postcard::to_allocvec` (`libc.rs:57`, `87`): plain postcard
+The `use_cobs=false` path uses `postcard::to_allocvec` (`libc.rs:63`, `93`): plain postcard
 with **no COBS, no `0x00`, and no framing**. The bytes are simply:
 
 ```
@@ -162,7 +162,7 @@ stream expecting `0x00`-delimited frames.
 
 The UART stream is a concatenation of `use_cobs=true` frames, each terminated by `0x00`. There
 is **no framing or concatenation loop in Rust**: one serialize call produces one complete frame
-(`libc.rs:62-74`), and the stream is formed by the firmware writing successive frames to UART.
+(`libc.rs:68-79`), and the stream is formed by the firmware writing successive frames to UART.
 The decoder splits the stream on the trailing `0x00` delimiter.
 
 ### Decode flow diagram
@@ -190,7 +190,7 @@ A conforming decoder implements the following per-frame procedure:
 4. **Dispatch** on the leading variant tag: `0x00` → `SubeventResultEvent`, `0x01` →
    `LogMessage`.
 
-The encode side is exercised by the round-trip test at `libc.rs:111-117`
+The encode side is exercised by the round-trip test at `libc.rs:117-123`
 (`to_allocvec_cobs` / `from_bytes_cobs`). For the UART wire path this repo is **encode-only**;
 the decode side runs in the closed-source `mars-ranging-demo` GUI binary, which is why this
 document — not that repo — is the authoritative contract. (Persisted-frame storage replay is
@@ -202,7 +202,7 @@ a separate, versioned contract with an in-repo decoder; see
 ### SubeventResultEvent (tag 0x00)
 
 The payload is the `SubeventResultEvent` struct
-(`mars-bluetooth-hci/src/event/hci_le_cs/subevent_result.rs:366-413`), serialized as its fields
+(`mars-bluetooth-hci/src/event/hci_le_cs/subevent_result.rs:392-442`), serialized as its fields
 concatenated in declaration order (no struct header). The 15 top-level fields, in wire order:
 
 | # | Field | Type | Encoding note |
@@ -253,7 +253,7 @@ serializing). See [architecture.md](architecture.md) §Known limitations.
 There is no struct — the variant wraps a borrowed `&str`. After the `0x01` tag, the payload is
 postcard's `serialize_str` encoding: a varint byte-length prefix followed by the raw UTF-8
 bytes (`postcard serializer.rs:184-191`). The `#[serde(borrow)]` attribute on this variant
-(`libc.rs:30`, `47`) is a zero-copy deserialization hint and does not affect the wire format.
+(`libc.rs:31`, `48`) is a zero-copy deserialization hint and does not affect the wire format.
 
 ## Decoder notes (non-obvious encoding facts)
 
@@ -277,17 +277,17 @@ serde serializes a fixed-size array through `serialize_tuple`, and postcard's
 choice that governs arrays.) The two array sites in this format therefore encode identically:
 
 - **`steps: [Step; 160]`** carries `#[serde_as(as = "[_; MAX_NUM_STEPS_REPORTED]")]`
-  (`subevent_result.rs:406`; `MAX_NUM_STEPS_REPORTED = 160`,
-  `mars-bluetooth-hci/src/event/hci_le_cs/constants.rs:54`). serde's built-in `[T; N]`
+  (`subevent_result.rs:436`; `MAX_NUM_STEPS_REPORTED = 160`,
+  `mars-bluetooth-hci/src/event/hci_le_cs/constants.rs:56`). serde's built-in `[T; N]`
   `Serialize` impl only covers up to 32 elements, so the 160-element array is serialized
   through the `serde_with` `[_; N]` Array adapter, which routes through `serialize_tuple`
   (`serde_with src/ser/impls.rs:343-357`). The 160 `Step`s are emitted back-to-back with no
   length prefix.
 - **`Mode2`'s three arrays** — `phase_correction_terms: [PhaseCorrectionTerm; 5]`,
   `quality_indicators: [ToneQualityIndicator; 5]`, and `extension_slots: [ExtensionSlot; 5]`
-  (`subevent_result.rs:227-231`; `MAX_ANTENNA_PATH_COUNT + 1 = 5`,
-  `mars-bluetooth-hci/src/event/hci_le_cs/constants.rs:56`) — have **no** `#[serde_as]` (the
-  `Mode2` struct at `subevent_result.rs:223-232` does not declare one). They take serde's
+  (`subevent_result.rs:237-241`; `MAX_ANTENNA_PATH_COUNT + 1 = 5`,
+  `mars-bluetooth-hci/src/event/hci_le_cs/constants.rs:58`) — have **no** `#[serde_as]` (the
+  `Mode2` struct at `subevent_result.rs:233-242` does not declare one). They take serde's
   built-in `[T; N]` path (5 ≤ 32), which is also `serialize_tuple`, so each is emitted as 5
   elements back-to-back with no length prefix.
 
@@ -303,7 +303,7 @@ ABI) but **none** declares `#[serde(tag = ...)]`. serde therefore ignores any ex
 order index**. The `#[repr(u8)]` discriminants are C-ABI values only and are **not** the wire
 values.
 
-Worked example — `DoneStatus` (`mars-bluetooth-hci/src/event/mod.rs:101-110`):
+Worked example — `DoneStatus` (`mars-bluetooth-hci/src/event/mod.rs:131-140`):
 
 | Variant | `#[repr(u8)]` discriminant (C ABI, shown in header) | Wire value (serde declaration order) |
 |---|---|---|
@@ -319,7 +319,7 @@ for `Aborted`/`Reserved`. The same declaration-order rule applies to `Origin`,
 `ModeRoleSpecificInfoKind`.
 
 A particularly subtle case: `ModeRoleSpecificInfoKind::Mode2` is declaration index **5**, so
-its wire value is `0x05` (`subevent_result.rs:257-290`). This is **distinct from** the HCI
+its wire value is `0x05` (`subevent_result.rs:267-294`). This is **distinct from** the HCI
 constant `step_mode::MODE_2 = 0x02` (`mars-bluetooth-hci/src/event/hci_le_cs/constants.rs:46`), which is the raw value that fills the
 `Step.mode: u8` field. Both values appear in the same `Step` struct — `mode` = `0x02` (a raw
 `u8`) followed by `info.kind` = `0x05` (the enum tag) — and must not be conflated. The same

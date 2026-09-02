@@ -296,9 +296,9 @@ pub enum ModeRoleSpecificInfoKind {
 impl ModeRoleSpecificInfoKind {
     /// Returns the CS step mode whose payload this kind carries.
     ///
-    /// The kind-to-mode mapping lives here so every consumer (the parser's
-    /// step population and tests that check a fixture's representativeness)
-    /// shares one compiler-checked definition.
+    /// The kind-to-mode mapping lives here so consumers that need it (the
+    /// fixture suite's representativeness check) share one compiler-checked
+    /// definition instead of a parallel match.
     pub fn mode(self) -> u8 {
         match self {
             Self::Mode0Reflector | Self::Mode0Initiator => step_mode::MODE_0,
@@ -688,7 +688,19 @@ impl SubeventResultEvent {
             let step_data = &message[step_data_offset..step_data_end];
 
             match step_mode {
-                step_mode::MODE_INVALID => {}
+                step_mode::MODE_INVALID => {
+                    // A 0xFF mode marks a reported step slot as carrying no
+                    // valid data. Preserve the sentinel instead of leaving a
+                    // fabricated default behind: `steps[..step_count]` then
+                    // holds exactly one entry per reported step, and
+                    // consumers filter on the sentinel mode.
+                    self.steps[step_index] = Step {
+                        mode: step_mode,
+                        channel: step_channel,
+                        info: ModeRoleSpecificInfo::default(),
+                    };
+                    step_index += 1;
+                }
                 step_mode::MODE_0 => {
                     let mode0 = Self::parse_mode0_step(step_data)?;
                     self.steps[step_index] = Step {
@@ -1452,6 +1464,13 @@ mod tests {
         let error = SubeventResultEvent::try_from_with_origin(&message, Origin::Initiator)
             .expect_err("a truncated config-complete header is rejected");
         assert!(matches!(error, ParseError::TooShort(15)));
+
+        // A config-complete message of 4..15 bytes with the CS-test handle:
+        // `message[3]` is skipped, but the branch guard still fires.
+        let message = [le_subevent_code::CS_CONFIG_COMPLETE, 0xFF, 0x0F, 0xAA];
+        let error = SubeventResultEvent::try_from_with_origin(&message, Origin::Unknown)
+            .expect_err("a truncated config-complete message is rejected");
+        assert!(matches!(error, ParseError::TooShort(4)));
     }
 
     #[test]

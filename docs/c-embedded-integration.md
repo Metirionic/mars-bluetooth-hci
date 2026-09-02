@@ -198,7 +198,7 @@ pattern is four steps:
    identity fields (`origin`, `local_mac`, `peer_mac`) are caller-set by design.
 2. **Serialize** with COBS on:
    `serialize_subevent_result_event(&event, /*use_cobs=*/true)`
-   (`mars-bluetooth-hci/src/libc.rs:62`) returns a `SerializedData_t` by value.
+   (`mars-bluetooth-hci/src/libc.rs:68`) returns a `SerializedData_t` by value.
 3. **Copy** the framed bytes out of the returned buffer (`p_data[0..size]`)
    **before** freeing — `p_data` is invalid after the free.
 4. **Free** the Rust-owned buffer exactly once with `drop_bin`

@@ -6,6 +6,10 @@
 //! parallel keep-in-sync copies. This file must stay free of crate-dependent
 //! imports so it compiles in both contexts.
 
+// Each compilation unit uses a subset of this module's items — the module is
+// the shared owner, so unused-on-one-side helpers are expected.
+#![allow(dead_code)]
+
 /// Fixture-root path relative to the crate's manifest directory.
 pub const FIXTURE_ROOT: &str = "tests/fixtures/persisted-frames";
 
@@ -25,6 +29,16 @@ pub fn version_dir_name(version: u16) -> String {
 /// Returns the fixture file name for one representative step mode.
 pub fn fixture_file_name(step_mode: u8) -> String {
     format!("mode{step_mode}.postcard.hex")
+}
+
+/// Returns the fixture root directory below a crate's manifest directory.
+pub fn fixture_root(manifest_dir: &std::path::Path) -> std::path::PathBuf {
+    manifest_dir.join(FIXTURE_ROOT)
+}
+
+/// Returns one version's fixture directory below a crate's manifest directory.
+pub fn fixture_dir(manifest_dir: &std::path::Path, version: u16) -> std::path::PathBuf {
+    fixture_root(manifest_dir).join(version_dir_name(version))
 }
 
 /// Reads and decodes one committed fixture's hexadecimal representation.
