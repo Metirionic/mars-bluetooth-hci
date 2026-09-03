@@ -40,6 +40,12 @@ fn read_lines<P: AsRef<Path>>(path: P) -> io::Result<io::Lines<io::BufReader<Fil
 }
 
 /// Read a file in vendor HCI text format and generate subevent result events from them.
+///
+/// # Panics
+///
+/// Panics on malformed input: a line that is not valid hexadecimal, or an
+/// event whose bytes the parser rejects (for example a truncated header or an
+/// out-of-range count) — malformed input is not silently skipped.
 pub fn read_file(path: &PathBuf) -> Vec<SubeventResultEvent> {
     /// The state of reading the input text file.
     enum ReadState {

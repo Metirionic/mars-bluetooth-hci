@@ -260,7 +260,8 @@ impl Mode2 {
 
 /// Discriminant for [`ModeRoleSpecificInfo`].
 ///
-/// The parser populates Mode 0, Mode 1, Mode 2, and Mode 3 variants.
+/// The parser populates Mode 0, Mode 1, Mode 2, Mode 3, and `Invalid` (the
+/// `0xFF` sentinel) variants.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[derive_ReprC]
 #[repr(u8)]
@@ -291,6 +292,28 @@ pub enum ModeRoleSpecificInfoKind {
     /// Appended at the end to preserve the existing wire values of the
     /// variants above.
     Mode0Initiator,
+    /// A step slot reported without valid data (Step_Mode `0xFF`).
+    ///
+    /// Appended at the end to preserve the existing wire values of the
+    /// variants above.
+    Invalid,
+}
+
+impl ModeRoleSpecificInfoKind {
+    /// Returns the CS step mode whose payload this kind carries.
+    pub fn mode(self) -> u8 {
+        match self {
+            Self::Mode0Reflector | Self::Mode0Initiator => step_mode::MODE_0,
+            Self::Mode1Initiator | Self::Mode1InitiatorPbrRtt | Self::Mode1Reflector | Self::Mode1ReflectorPbrRtt => {
+                step_mode::MODE_1
+            }
+            Self::Mode2 => step_mode::MODE_2,
+            Self::Mode3Initiator | Self::Mode3InitiatorPbrRtt | Self::Mode3Reflector | Self::Mode3ReflectorPbrRtt => {
+                step_mode::MODE_3
+            }
+            Self::Invalid => step_mode::MODE_INVALID,
+        }
+    }
 }
 
 /// Mode- and role-specific information.
@@ -376,9 +399,12 @@ pub enum Origin {
 pub struct SubeventResultEvent {
     /// The origin of the data (initiator or reflector).
     ///
-    /// Left at [`Origin::Unknown`] by the parser; the caller sets this from
-    /// out-of-band context (which node produced the bytes), as the file-reader
-    /// helper does.
+    /// The origin must be supplied before parsing — through
+    /// [`SubeventResultEvent::try_from_with_origin`] — because Mode 1 and
+    /// Mode 3 steps reject an unknown origin (see
+    /// [`ParseError::UnknownOriginForMode`]). It is not settable afterwards
+    /// for frames carrying Mode 1 or Mode 3 steps: their payload kinds and
+    /// role timings were already selected from the origin during the parse.
     pub origin: Origin,
 
     /// MAC address of the local node.
@@ -426,6 +452,35 @@ impl SubeventResultEvent {
     /// Parse a subevent result message with known origin information.
     pub fn try_from_with_origin(message: &[u8], origin: Origin) -> Result<Self, ParseError> {
         Self::parse_internal(message, origin)
+    }
+
+    /// Checks the invariants the parser guarantees for every event it
+    /// produces.
+    ///
+    /// The parser rejects messages whose step or antenna-path counts exceed
+    /// the fixed step array and the fixed antenna-path table, and populates
+    /// every reported step with a payload kind that carries its mode's data,
+    /// so no event it returns can break these bounds. Producers of events
+    /// from stored bytes must re-validate so consumers indexing
+    /// `steps[..step_count]` cannot panic on — or mistake — a corrupted or
+    /// foreign-encoder frame.
+    pub fn validate_invariants(&self) -> Result<(), ParseError> {
+        if self.antenna_path_count > MAX_ANTENNA_PATH_COUNT {
+            return Err(ParseError::ExceededMaxAntennaPathCount);
+        }
+        if self.step_count > MAX_NUM_STEPS_REPORTED {
+            return Err(ParseError::ExceededMaxStepCount);
+        }
+        for (index, step) in self.steps[..self.step_count].iter().enumerate() {
+            if step.info.kind.mode() != step.mode {
+                return Err(ParseError::StepKindModeMismatch {
+                    index,
+                    mode: step.mode,
+                    kind: step.info.kind,
+                });
+            }
+        }
+        Ok(())
     }
 
     /// Return the expected Mode 2 step payload length for an antenna path count.
@@ -603,13 +658,54 @@ impl SubeventResultEvent {
         let mut step_byte_offset = if self.has_initial_meta { 16 } else { 9 };
 
         for _ in 0..self.step_count {
+            // The step header (mode, channel, and length) runs through
+            // `3 + step_byte_offset - 1`.
+            if message.len() < 3 + step_byte_offset {
+                return Err(ParseError::TooShort(message.len()));
+            }
             let step_mode = message[step_byte_offset];
             let step_channel = message[1 + step_byte_offset];
             let step_data_length = message[2 + step_byte_offset] as usize;
+
+            if message.len() < 3 + step_byte_offset + step_data_length {
+                return Err(ParseError::TooShort(message.len()));
+            }
             let step_data = &message[3 + step_byte_offset..3 + step_byte_offset + step_data_length];
 
             match step_mode {
-                step_mode::MODE_INVALID => {}
+                // A zero-length step is an aborted step: the controller
+                // reports the slot without data regardless of its mode byte
+                // (Core Spec Vol 4, Part E §7.7.65.44/45). Preserve it as a
+                // sentinel instead of rejecting the whole subevent, so the
+                // other measurements are not lost with it.
+                _ if step_data_length == 0 => {
+                    self.steps[step_index] = Step {
+                        mode: step_mode::MODE_INVALID,
+                        channel: step_channel,
+                        info: ModeRoleSpecificInfo {
+                            kind: ModeRoleSpecificInfoKind::Invalid,
+                            ..Default::default()
+                        },
+                    };
+                    step_index += 1;
+                }
+                step_mode::MODE_INVALID => {
+                    // A 0xFF mode marks a reported step slot as carrying no
+                    // valid data. Preserve the sentinel with its own payload
+                    // kind instead of leaving a fabricated default behind:
+                    // `steps[..step_count]` then holds exactly one entry per
+                    // reported step whose kind never claims mode data, and
+                    // consumers filter on the sentinel mode.
+                    self.steps[step_index] = Step {
+                        mode: step_mode,
+                        channel: step_channel,
+                        info: ModeRoleSpecificInfo {
+                            kind: ModeRoleSpecificInfoKind::Invalid,
+                            ..Default::default()
+                        },
+                    };
+                    step_index += 1;
+                }
                 step_mode::MODE_0 => {
                     let mode0 = Self::parse_mode0_step(step_data)?;
                     self.steps[step_index] = Step {
@@ -711,7 +807,16 @@ impl SubeventResultEvent {
     }
 
     /// Parse a subevent result or continuation message with the supplied origin.
+    ///
+    /// Malformed input — boot noise, a truncated buffer, or a hostile frame —
+    /// is rejected with an error instead of panicking: every message index is
+    /// length-guarded before it is read.
     fn parse_internal(message: &[u8], origin: Origin) -> Result<Self, ParseError> {
+        // The common header prefix (subevent code, connection handle, and the
+        // config id for a non-CS-test handle) runs through index 3.
+        if message.len() < 4 {
+            return Err(ParseError::TooShort(message.len()));
+        }
         let connection_handle = u16::from_le_bytes(message[1..3].try_into()?);
         let connection_handle_is_cs_test = connection_handle == handle::CS_TEST_CONNECTION_HANDLE;
 
@@ -723,6 +828,10 @@ impl SubeventResultEvent {
 
         let mut event = match message[0] {
             le_subevent_code::CS_CONFIG_COMPLETE => {
+                // The config-complete header runs through index 15.
+                if message.len() < 16 {
+                    return Err(ParseError::TooShort(message.len()));
+                }
                 let (start_acl_conn_event_counter, has_start_acl_conn_event_counter) = if connection_handle_is_cs_test {
                     (0, false)
                 } else {
@@ -741,6 +850,9 @@ impl SubeventResultEvent {
                 let num_antenna_paths = message[14] as usize;
                 let num_steps_reported = message[15] as usize;
 
+                if num_antenna_paths > MAX_ANTENNA_PATH_COUNT {
+                    return Err(ParseError::ExceededMaxAntennaPathCount);
+                }
                 if num_steps_reported > MAX_NUM_STEPS_REPORTED {
                     return Err(ParseError::ExceededMaxStepCount);
                 }
@@ -775,6 +887,11 @@ impl SubeventResultEvent {
                 }
             }
             le_subevent_code::CS_SUBEVENT_RESULT_CONTINUE => {
+                // The continue header runs through index 8; steps follow from
+                // index 9 on.
+                if message.len() < 9 {
+                    return Err(ParseError::TooShort(message.len()));
+                }
                 let abort_reason = message[6];
                 let procedure = ProcedureInfo::from((message[4], abort_reason));
                 let subevent = SubeventInfo::from((message[5], abort_reason));
@@ -782,6 +899,9 @@ impl SubeventResultEvent {
                 let num_antenna_paths = message[7] as usize;
                 let num_steps_reported = message[8] as usize;
 
+                if num_antenna_paths > MAX_ANTENNA_PATH_COUNT {
+                    return Err(ParseError::ExceededMaxAntennaPathCount);
+                }
                 if num_steps_reported > MAX_NUM_STEPS_REPORTED {
                     return Err(ParseError::ExceededMaxStepCount);
                 }
@@ -833,7 +953,7 @@ mod tests {
     use super::{
         ModeRoleSpecificInfoKind, Origin, PhaseCorrectionTerm, RoundTripTimeRoleTimingKind, SubeventResultEvent,
     };
-    use crate::event::hci_le_cs::constants::le_subevent_code;
+    use crate::event::hci_le_cs::constants::{le_subevent_code, step_mode};
     use crate::event::{ExtensionSlot, ParseError, ToneQualityIndicator};
 
     fn continue_event(step_mode: u8, channel: u8, antenna_path_count: u8, step_data: &[u8]) -> Vec<u8> {
@@ -1254,5 +1374,167 @@ mod tests {
 
         let error = SubeventResultEvent::try_from(message.as_slice()).unwrap_err();
         assert!(matches!(error, ParseError::UnknownOriginForMode(0x03)));
+    }
+
+    /// Builds the bytes of a `CS_CONFIG_COMPLETE` event carrying no steps and
+    /// populated initial metadata.
+    fn config_complete_event() -> [u8; 16] {
+        [
+            le_subevent_code::CS_CONFIG_COMPLETE,
+            0x40,
+            0x00, // connection handle
+            0x07, // config id
+            0x34,
+            0x12, // start ACL connection event counter
+            0x42,
+            0x00, // procedure counter
+            0xC8,
+            0x00, // frequency compensation
+            0x0A, // reference power level
+            0x00, // procedure done status
+            0x00, // subevent done status
+            0x00, // abort reason
+            0x01, // antenna path count
+            0x00, // no steps reported
+        ]
+    }
+
+    #[test]
+    fn test_invalid_mode_slots_preserve_the_sentinel() {
+        // A 0xFF slot followed by a real Mode 2 step: the sentinel is
+        // preserved with its own payload kind, so the step window maps 1:1 to
+        // the reported slots and no step fabricates mode data.
+        let mut message = vec![0x32u8, 0x01, 0x00, 0x07, 0x00, 0x00, 0x00, 0x01, 0x02];
+        message.extend_from_slice(&[0xFF, 0x05, 0x03, 0xAA, 0xBB, 0xCC]);
+        message.extend_from_slice(&[0x02, 0x05, mode2_step_data().len() as u8]);
+        message.extend_from_slice(&mode2_step_data());
+
+        let event = SubeventResultEvent::try_from_with_origin(message.as_slice(), Origin::Unknown).unwrap();
+
+        assert_eq!(event.step_count, 2);
+        let sentinel = &event.steps[0];
+        assert_eq!(sentinel.mode, step_mode::MODE_INVALID);
+        assert_eq!(sentinel.channel, 0x05);
+        assert_eq!(sentinel.info.kind, ModeRoleSpecificInfoKind::Invalid);
+        assert_eq!(sentinel.info.kind.mode(), sentinel.mode);
+        let mode2 = &event.steps[1];
+        assert_eq!(mode2.mode, step_mode::MODE_2);
+        assert_eq!(mode2.info.kind, ModeRoleSpecificInfoKind::Mode2);
+        assert_eq!(mode2.info.mode2.antenna_permutation_index, 9);
+
+        // The sentinel round-trips through the persisted representation, so
+        // the new kind's wire value is pinned.
+        #[cfg(all(feature = "std", feature = "alloc", feature = "libc"))]
+        {
+            let bytes = crate::event::hci_le_cs::persisted_frame::encode(&event).expect("sentinel event encodes");
+            let decoded = crate::event::hci_le_cs::persisted_frame::decode(
+                crate::event::hci_le_cs::persisted_frame::current_frame_descriptor(),
+                &bytes,
+            )
+            .expect("sentinel event decodes");
+            assert_eq!(decoded.steps[0].info.kind, ModeRoleSpecificInfoKind::Invalid);
+        }
+    }
+
+    #[test]
+    fn test_zero_length_aborted_steps_preserve_the_subevent() {
+        // A controller aborts a step by reporting it with Step_Data_Length 0
+        // (Core Spec Vol 4, Part E §7.7.65.44/45); the slot is preserved as a
+        // sentinel and the subevent's real steps still parse.
+        let mut message = vec![0x32u8, 0x01, 0x00, 0x07, 0x00, 0x00, 0x00, 0x01, 0x02];
+        message.extend_from_slice(&[0x01, 0x05, 0x00]);
+        message.extend_from_slice(&[0x02, 0x05, mode2_step_data().len() as u8]);
+        message.extend_from_slice(&mode2_step_data());
+
+        let event = SubeventResultEvent::try_from_with_origin(message.as_slice(), Origin::Unknown).unwrap();
+
+        assert_eq!(event.step_count, 2);
+        assert_eq!(event.steps[0].mode, step_mode::MODE_INVALID);
+        assert_eq!(event.steps[0].info.kind, ModeRoleSpecificInfoKind::Invalid);
+        assert_eq!(event.steps[1].mode, step_mode::MODE_2);
+        assert_eq!(event.steps[1].info.mode2.antenna_permutation_index, 9);
+    }
+
+    #[test]
+    fn test_config_complete_header_fields_are_parsed() {
+        let message = config_complete_event();
+
+        let event = SubeventResultEvent::try_from_with_origin(message.as_slice(), Origin::Unknown).unwrap();
+
+        assert!(event.has_initial_meta);
+        assert_eq!(event.step_count, 0);
+        assert_eq!(event.antenna_path_count, 1);
+        assert_eq!(event.config_id, 0x07);
+        assert!(event.has_config_id);
+        assert_eq!(event.initial_meta.start_acl_conn_event_counter, 0x1234);
+        assert!(event.initial_meta.has_start_acl_conn_event_counter);
+        assert_eq!(event.initial_meta.procedure_counter, 0x0042);
+    }
+
+    #[test]
+    fn short_messages_are_rejected_without_panicking() {
+        // Boot noise or a truncated buffer can produce short or empty messages;
+        // every message index is length-guarded before it is read.
+        for message in [
+            &[] as &[u8],
+            &[le_subevent_code::CS_SUBEVENT_RESULT_CONTINUE],
+            &[0x11, 0x01],
+            &[le_subevent_code::CS_SUBEVENT_RESULT_CONTINUE, 0x01, 0x00],
+        ] {
+            let error = SubeventResultEvent::try_from_with_origin(message, Origin::Initiator)
+                .expect_err("a message below the common header prefix is rejected");
+            assert!(matches!(error, ParseError::TooShort(_)));
+        }
+
+        // A continue header cut short (the header runs through index 8).
+        let message = continue_event(0x01, 0x05, 0x01, &mode1_basic_step_data(0x21, 0x12, 0x34));
+        let error = SubeventResultEvent::try_from_with_origin(&message[..8], Origin::Initiator)
+            .expect_err("a truncated continue header is rejected");
+        assert!(matches!(error, ParseError::TooShort(8)));
+
+        // A config-complete header cut short (the header runs through index 15).
+        let message = [le_subevent_code::CS_CONFIG_COMPLETE; 15];
+        let error = SubeventResultEvent::try_from_with_origin(&message, Origin::Initiator)
+            .expect_err("a truncated config-complete header is rejected");
+        assert!(matches!(error, ParseError::TooShort(15)));
+
+        // A config-complete message of 4..15 bytes with the CS-test handle:
+        // `message[3]` is skipped, but the branch guard still fires.
+        let message = [le_subevent_code::CS_CONFIG_COMPLETE, 0xFF, 0x0F, 0xAA];
+        let error = SubeventResultEvent::try_from_with_origin(&message, Origin::Unknown)
+            .expect_err("a truncated config-complete message is rejected");
+        assert!(matches!(error, ParseError::TooShort(4)));
+
+        // A multi-step message truncated between steps: the step-header guard
+        // must fire before the second step's bytes are read.
+        let mut message = continue_event(0x02, 0x05, 0x01, &mode2_step_data());
+        message[8] = 2; // report two steps but ship only one
+
+        let error = SubeventResultEvent::try_from_with_origin(message.as_slice(), Origin::Unknown)
+            .expect_err("a message truncated between steps is rejected");
+        assert!(matches!(error, ParseError::TooShort(_)));
+    }
+
+    #[test]
+    fn step_data_overruns_are_rejected_without_panicking() {
+        // The step header claims more step data than the message carries.
+        let mut message = continue_event(0x02, 0x05, 0x01, &mode2_step_data());
+        message[11] = 0xC8; // 200, beyond the bytes following the step header
+
+        let error = SubeventResultEvent::try_from_with_origin(message.as_slice(), Origin::Unknown)
+            .expect_err("a step-data overrun is rejected");
+        assert!(matches!(error, ParseError::TooShort(_)), "{error:?}");
+    }
+
+    #[test]
+    fn antenna_path_counts_beyond_the_tone_tables_are_rejected() {
+        // Mode 2 tone fields exist for at most `MAX_ANTENNA_PATH_COUNT`
+        // antenna paths; the parser rejects an over-range count at the header
+        // instead of indexing the fixed tone tables out of bounds.
+        let message = continue_event(0x02, 0x05, 0x05, &mode2_step_data());
+
+        let error = SubeventResultEvent::try_from_with_origin(message.as_slice(), Origin::Unknown)
+            .expect_err("an over-range antenna path count is rejected");
+        assert!(matches!(error, ParseError::ExceededMaxAntennaPathCount));
     }
 }
