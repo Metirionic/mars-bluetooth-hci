@@ -1,11 +1,12 @@
 //! C interface module for serialization.
 extern crate alloc;
 
+use alloc::vec::Vec;
 use core::ffi::c_char;
 use core::ffi::c_str::CStr;
 
 use mars_common::libc::serialize::SerializedData;
-use postcard::{to_allocvec, to_allocvec_cobs};
+use postcard::{to_allocvec, to_allocvec_cobs, to_extend};
 use safer_ffi::ffi_export;
 use serde::Serialize;
 
@@ -18,8 +19,10 @@ use crate::event::hci_le_cs::subevent_result::SubeventResultEvent;
 /// log messages into a uniform byte stream (via [`postcard`]).
 /// The receiver side deserializes this enum and dispatches accordingly.
 ///
-/// The [`SubeventResultEvent`] variant is boxed to avoid placing the
-/// large struct (~8 KB) on the stack during deserialization.
+/// The [`SubeventResultEvent`] variant is boxed so a `Serializable` value
+/// does not itself carry the full ~16 KB step array; note that serde still
+/// builds the inner value on the stack before boxing, so deserializing a
+/// subevent-result frame needs far more stack than the event's size.
 #[derive(Debug, Serialize, serde::Deserialize)]
 #[cfg(feature = "std")]
 pub enum Serializable<'d> {
@@ -34,7 +37,10 @@ pub enum Serializable<'d> {
 ///
 /// Uses references instead of owned/boxed values so the C/embedded side
 /// can serialize without cloning or heap-allocating the large event struct.
-/// Produces an identical wire format to [`Serializable`].
+/// Produces an identical wire format to [`Serializable`]. The persisted-frame
+/// codec encodes through this enum (via the shared
+/// `serialize_subevent_result_event_bytes` core) and decodes through a
+/// private, byte-identical mirror of it in `event::hci_le_cs::persisted_frame`.
 #[derive(Serialize)]
 pub enum SerializableRef<'d> {
     /// A CS subevent result from the HCI layer.
@@ -44,15 +50,37 @@ pub enum SerializableRef<'d> {
     LogMessage(&'d str),
 }
 
+/// Serializes one subevent-result event into the plain, non-COBS envelope bytes.
+///
+/// The shared serialization core of the FFI serializer's `use_cobs = false`
+/// path and the persisted-frame codec: both byte streams are this function's
+/// output, so the two cannot drift apart. The core serializes any event
+/// faithfully — count validation is each caller's choice: the codec's
+/// `encode` validates, while the FFI serializer serializes whatever C built
+/// and a count-invalid event's bytes are rejected by the codec's replay gate.
+pub(crate) fn serialize_subevent_result_event_bytes(event: &SubeventResultEvent) -> postcard::Result<Vec<u8>> {
+    // The fixed step array dominates the frame: one allocation comfortably
+    // above the ~13.3 KB serialized size avoids postcard's grow-by-doubling
+    // reallocations. Underestimating is safe — `to_extend` grows the buffer —
+    // and postcard's varint encoding keeps the frame below the in-memory
+    // event's size. The bytes are identical to `to_allocvec`'s.
+    let buffer = Vec::with_capacity(14 * 1024);
+    to_extend(&SerializableRef::SubeventResultEvent(event), buffer)
+}
+
 /// Serialize a subevent result event to [`SerializedData`].
 #[ffi_export]
 pub extern "C" fn serialize_subevent_result_event(p_event: &SubeventResultEvent, use_cobs: bool) -> SerializedData {
     let event = SerializableRef::SubeventResultEvent(p_event);
 
     if use_cobs {
-        to_allocvec_cobs(&event).unwrap().into()
+        to_allocvec_cobs(&event)
+            .expect("subevent result event serializes")
+            .into()
     } else {
-        to_allocvec(&event).unwrap().into()
+        serialize_subevent_result_event_bytes(p_event)
+            .expect("subevent result event serializes")
+            .into()
     }
 }
 
@@ -65,9 +93,9 @@ pub unsafe extern "C" fn serialize_log_message(p_log_message: *const c_char, use
     let message = SerializableRef::LogMessage(unsafe { CStr::from_ptr(p_log_message) }.to_str().unwrap_or_default());
 
     if use_cobs {
-        to_allocvec_cobs(&message).unwrap().into()
+        to_allocvec_cobs(&message).expect("log message serializes").into()
     } else {
-        to_allocvec(&message).unwrap().into()
+        to_allocvec(&message).expect("log message serializes").into()
     }
 }
 

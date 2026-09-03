@@ -32,6 +32,8 @@ terms (I/Q), tone quality indicators, extension slots, and antenna permutation t
 | [`ToneQualityIndicator`] | High / Medium / Low / Unavailable quality rating |
 | [`InitialMeta`] | Metadata from the first subevent (procedure counter, frequency compensation, reference power) |
 | [`Origin`] | Initiator / Reflector / Unknown data origin |
+| [`FrameDescriptor`] | Declares the format name and version of a persisted CS subevent-result frame |
+| [`FrameCodecError`] | Errors from persisted-frame encode/decode |
 
 [`SubeventResultEvent`]: src/event/hci_le_cs/subevent_result.rs
 [`Mode1Data`]: src/event/hci_le_cs/subevent_result.rs
@@ -41,6 +43,8 @@ terms (I/Q), tone quality indicators, extension slots, and antenna permutation t
 [`ToneQualityIndicator`]: src/event/mod.rs
 [`InitialMeta`]: src/event/hci_le_cs/subevent_result.rs
 [`Origin`]: src/event/hci_le_cs/subevent_result.rs
+[`FrameDescriptor`]: src/event/hci_le_cs/persisted_frame.rs
+[`FrameCodecError`]: src/event/hci_le_cs/persisted_frame.rs
 
 ## Feature Flags
 
@@ -51,6 +55,7 @@ terms (I/Q), tone quality indicators, extension slots, and antenna permutation t
 | `libc` | Yes | Enable C FFI serialization functions |
 | `libc-alloc` | No | Bridge Rust allocator to C `malloc`/`free` |
 | `libc-panic` | No | Bridge Rust panic handler to C callback |
+| `persisted-frame` | Yes | Versioned persisted-frame encode/decode (implies `std`, `alloc`, `libc`) |
 | `headers` | No | Generate C headers via `safer-ffi` |
 
 ## C FFI
@@ -71,6 +76,18 @@ Pre-generated C headers are included at [`mars_bluetooth_hci.h`](mars_bluetooth_
 A CMake config is provided at [`mars-bluetooth-hci-rust-config.cmake`](mars-bluetooth-hci-rust-config.cmake) for embedding into C projects, including cross-compilation for ARM Cortex-M targets.
 
 For a full build/link + FFI call-pattern walkthrough, see [docs/c-embedded-integration.md](../docs/c-embedded-integration.md).
+
+## Persisted frames
+
+The crate can encode and decode versioned persisted frames of decoded subevent results
+through [`event::hci_le_cs::persisted_frame`](src/event/hci_le_cs/persisted_frame.rs)
+(the `persisted-frame` feature, enabled by default; unavailable to the embedded `no_std`
+feature set). `encode` validates the event's counts and emits bare frame bytes — no in-band
+version — and the caller persists the descriptor returned by `current_frame_descriptor()`
+alongside them; `decode` is strict (trailing bytes are rejected) and dispatches only on the
+declared descriptor. V1 frames are byte-compatible with the non-COBS FFI serialization. See
+[ADR-0003](../docs/adr/0003-versioned-persisted-frame-codec.md) and
+[docs/wire-format.md](../docs/wire-format.md) §Versioning and compatibility for the contract.
 
 ## `no_std` Support
 

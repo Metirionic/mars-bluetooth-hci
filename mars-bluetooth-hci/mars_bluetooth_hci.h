@@ -210,7 +210,8 @@ SubeventAbortReason_t;
 /** \brief
  *  Discriminant for [`ModeRoleSpecificInfo`].
  *
- *  The parser populates Mode 0, Mode 1, Mode 2, and Mode 3 variants.
+ *  The parser populates Mode 0, Mode 1, Mode 2, Mode 3, and `Invalid` (the
+ *  0xFF sentinel) variants.
  */
 /** \remark Has the same ABI as `uint8_t` **/
 #ifdef DOXYGEN
@@ -264,6 +265,18 @@ enum ModeRoleSpecificInfoKind {
      *  variants above.
      */
     MODE_ROLE_SPECIFIC_INFO_KIND_MODE0_INITIATOR,
+    /** \brief
+     *  A step slot reported without valid data (Step_Mode `0xFF`).
+     *
+     *  Appended at the end to preserve the existing wire values of the
+     *  variants above. Old readers cannot deserialize frames that carry this
+     *  kind — the same trade-off as every appended variant. On the UART wire
+     *  path that compatibility is governed by the tag-co-pinning policy of
+     *  [wire-format.md](../../docs/wire-format.md) §Versioning and
+     *  compatibility; for stored frames, by the persisted-frame version
+     *  policy.
+     */
+    MODE_ROLE_SPECIFIC_INFO_KIND_INVALID,
 }
 #ifndef DOXYGEN
 ; typedef uint8_t
@@ -670,9 +683,12 @@ typedef struct SubeventResultEvent {
     /** \brief
      *  The origin of the data (initiator or reflector).
      *
-     *  Left at [`Origin::Unknown`] by the parser; the caller sets this from
-     *  out-of-band context (which node produced the bytes), as the file-reader
-     *  helper does.
+     *  Supplied to the parser up front via
+     *  [`SubeventResultEvent::try_from_with_origin`]: Mode 1 and Mode 3 steps
+     *  need the node's role while parsing (their timing field is interpreted
+     *  per role). Parsing through plain [`TryFrom`](core::convert::From)
+     *  (origin [`Origin::Unknown`]) only accepts subevents whose steps carry
+     *  no role-specific data.
      */
     Origin_t origin;
 

@@ -24,12 +24,15 @@ Because the downstream decoder (`mars-ranging-demo`) is closed-source, **this do
 canonical contract** for the wire format. The closed-source evaluation-app decoder and any
 third-party decoder MUST conform to the format defined here. This repo is encode-only and is
 the authoritative source for the contract (ADR-0001); ADR-0001 owns the *why* (the decision),
-this document owns the *what* (the byte-level layout, framing, and decode procedure).
+this document owns the *what* (the byte-level layout, framing, and decode procedure). That
+encode-only boundary belongs to the UART wire path; persisted-frame storage replay is a
+separate, versioned contract with an in-repo decoder
+([ADR-0003](adr/0003-versioned-persisted-frame-codec.md)).
 
 ## The envelope
 
 The unit of serialization is the externally-tagged `SerializableRef` / `Serializable` enum
-defined in `mars-bluetooth-hci/src/libc.rs:23-45`. It has two variants:
+defined in `mars-bluetooth-hci/src/libc.rs:28-50`. It has two variants:
 
 - `SubeventResultEvent` — a CS subevent result (declaration index 0).
 - `LogMessage` — a firmware log message, borrowing a C string (declaration index 1).
@@ -38,9 +41,13 @@ defined in `mars-bluetooth-hci/src/libc.rs:23-45`. It has two variants:
 deserializable, `#[cfg(feature = "std")]`) produce an **identical wire format**: both wrap
 the same inner value (`&SubeventResultEvent` vs `Box<SubeventResultEvent>`, `&str` vs `&str`),
 which postcard serializes identically regardless of the borrow/own wrapping. The
-`log_message_wire_format_matches` test (`libc.rs:78-84`) asserts this for the `LogMessage`
+`log_message_wire_format_matches` test (`libc.rs:106-112`) asserts this for the `LogMessage`
 variant; the `SubeventResultEvent` variant follows from the same wrapping-irrelevant rule. A
-decoder deserializes into the owning `Serializable` enum and dispatches on the variant.
+decoder deserializes into the owning `Serializable` enum and dispatches on the variant —
+note that plain deserialization enforces nothing about the event's contents: only
+`mars-bluetooth-hci`'s persisted-frame `decode` (or an explicit
+`SubeventResultEvent::validate_invariants`) checks the step and antenna-path counts, so a
+decoder author who needs those bounds enforced must gate through it.
 
 The frame begins **directly with the variant tag** — there is no outer length prefix, no magic
 byte, and no version field before it.
@@ -54,8 +61,8 @@ via `serialize_newtype_variant` (postcard `src/ser/serializer.rs:246-259`: it pu
 
 | Wire tag | Variant | Payload | Source |
 |---|---|---|---|
-| `0x00` | `SubeventResultEvent` | the struct's fields, concatenated in declaration order | `libc.rs:27`, `41` |
-| `0x01` | `LogMessage` | varint byte-length prefix + raw UTF-8 bytes (`&str`) | `libc.rs:30`, `44` |
+| `0x00` | `SubeventResultEvent` | the struct's fields, concatenated in declaration order | `libc.rs:30`, `47` |
+| `0x01` | `LogMessage` | varint byte-length prefix + raw UTF-8 bytes (`&str`) | `libc.rs:32`, `49` |
 
 ### No in-band version or magic byte
 
@@ -64,6 +71,10 @@ first byte of every frame is the variant tag. The only `version` / `BINARY_FORMA
 this repo (`mars-common/src/serde.rs`) belongs to a *separate* recording-file container
 (`BinaryData`) for timestamped raw blobs — it is not part of this envelope. Versioning is
 handled out-of-band; see [Versioning and compatibility](#versioning-and-compatibility) below.
+Persisted (non-COBS, storage-side) frames **are** versioned out-of-band, through the frame
+descriptor of the persisted-frame codec
+([ADR-0003](adr/0003-versioned-persisted-frame-codec.md)); the UART envelope itself remains
+without an in-band version pending #15.
 
 ## Encoding: postcard + COBS
 
@@ -95,7 +106,7 @@ Two structural rules load-bearing for this format:
 ### COBS byte-stuffing and the trailing 0x00 delimiter
 
 The `use_cobs=true` path encodes with `postcard::to_allocvec_cobs`
-(`mars-bluetooth-hci/src/libc.rs:53`, `68`), which fuses serde serialization, COBS
+(`mars-bluetooth-hci/src/libc.rs:77`, `96`), which fuses serde serialization, COBS
 byte-stuffing, and a trailing `0x00` sentinel into a single call. COBS guarantees the encoded
 body contains **no zero bytes** (postcard `src/ser/flavors.rs:508-510`); the trailing `0x00`
 is appended by postcard's `Cobs` flavor `finalize` (`flavors.rs:561-566`; `src/ser/mod.rs:233`
@@ -136,8 +147,10 @@ writes the returned buffer to UART and then frees it with `drop_bin` (see
 
 ### use_cobs=false (unframed / non-streaming)
 
-The `use_cobs=false` path uses `postcard::to_allocvec` (`libc.rs:55`, `70`): plain postcard
-with **no COBS, no `0x00`, and no framing**. The bytes are simply:
+The `use_cobs=false` path serializes with plain postcard — `libc.rs:68` serializes the
+subevent-result envelope into a pre-sized buffer via `postcard::to_extend`, and the
+log-message path (`libc.rs:98`) uses `postcard::to_allocvec`; both emit identical postcard
+bytes — with **no COBS, no `0x00`, and no framing**. The bytes are simply:
 
 ```
 [variant tag] [payload]
@@ -155,7 +168,7 @@ stream expecting `0x00`-delimited frames.
 
 The UART stream is a concatenation of `use_cobs=true` frames, each terminated by `0x00`. There
 is **no framing or concatenation loop in Rust**: one serialize call produces one complete frame
-(`libc.rs:49-56`), and the stream is formed by the firmware writing successive frames to UART.
+(`libc.rs:73-80`), and the stream is formed by the firmware writing successive frames to UART.
 The decoder splits the stream on the trailing `0x00` delimiter.
 
 ### Decode flow diagram
@@ -183,17 +196,19 @@ A conforming decoder implements the following per-frame procedure:
 4. **Dispatch** on the leading variant tag: `0x00` → `SubeventResultEvent`, `0x01` →
    `LogMessage`.
 
-The encode side is exercised by the round-trip test at `libc.rs:94-100`
-(`to_allocvec_cobs` / `from_bytes_cobs`). This repo is **encode-only**; the decode side runs
-in the closed-source `mars-ranging-demo` GUI binary, which is why this document — not that
-repo — is the authoritative contract.
+The encode side is exercised by the round-trip test at `libc.rs:122-128`
+(`to_allocvec_cobs` / `from_bytes_cobs`). For the UART wire path this repo is **encode-only**;
+the decode side runs in the closed-source `mars-ranging-demo` GUI binary, which is why this
+document — not that repo — is the authoritative contract. (Persisted-frame storage replay is
+a separate, versioned contract with an in-repo decoder; see
+[ADR-0003](adr/0003-versioned-persisted-frame-codec.md).)
 
 ## Payloads
 
 ### SubeventResultEvent (tag 0x00)
 
 The payload is the `SubeventResultEvent` struct
-(`mars-bluetooth-hci/src/event/hci_le_cs/subevent_result.rs:366-413`), serialized as its fields
+(`mars-bluetooth-hci/src/event/hci_le_cs/subevent_result.rs:404-460`), serialized as its fields
 concatenated in declaration order (no struct header). The 15 top-level fields, in wire order:
 
 | # | Field | Type | Encoding note |
@@ -244,7 +259,7 @@ serializing). See [architecture.md](architecture.md) §Known limitations.
 There is no struct — the variant wraps a borrowed `&str`. After the `0x01` tag, the payload is
 postcard's `serialize_str` encoding: a varint byte-length prefix followed by the raw UTF-8
 bytes (`postcard serializer.rs:184-191`). The `#[serde(borrow)]` attribute on this variant
-(`libc.rs:29`, `43`) is a zero-copy deserialization hint and does not affect the wire format.
+(`libc.rs:32`, `49`) is a zero-copy deserialization hint and does not affect the wire format.
 
 ## Decoder notes (non-obvious encoding facts)
 
@@ -268,17 +283,17 @@ serde serializes a fixed-size array through `serialize_tuple`, and postcard's
 choice that governs arrays.) The two array sites in this format therefore encode identically:
 
 - **`steps: [Step; 160]`** carries `#[serde_as(as = "[_; MAX_NUM_STEPS_REPORTED]")]`
-  (`subevent_result.rs:406`; `MAX_NUM_STEPS_REPORTED = 160`,
-  `mars-bluetooth-hci/src/event/hci_le_cs/constants.rs:54`). serde's built-in `[T; N]`
+  (`subevent_result.rs:448`; `MAX_NUM_STEPS_REPORTED = 160`,
+  `mars-bluetooth-hci/src/event/hci_le_cs/constants.rs:56`). serde's built-in `[T; N]`
   `Serialize` impl only covers up to 32 elements, so the 160-element array is serialized
   through the `serde_with` `[_; N]` Array adapter, which routes through `serialize_tuple`
   (`serde_with src/ser/impls.rs:343-357`). The 160 `Step`s are emitted back-to-back with no
   length prefix.
 - **`Mode2`'s three arrays** — `phase_correction_terms: [PhaseCorrectionTerm; 5]`,
   `quality_indicators: [ToneQualityIndicator; 5]`, and `extension_slots: [ExtensionSlot; 5]`
-  (`subevent_result.rs:227-231`; `MAX_ANTENNA_PATH_COUNT + 1 = 5`,
-  `mars-bluetooth-hci/src/event/hci_le_cs/constants.rs:56`) — have **no** `#[serde_as]` (the
-  `Mode2` struct at `subevent_result.rs:223-232` does not declare one). They take serde's
+  (`subevent_result.rs:237-241`; `MAX_ANTENNA_PATH_COUNT + 1 = 5`,
+  `mars-bluetooth-hci/src/event/hci_le_cs/constants.rs:58`) — have **no** `#[serde_as]` (the
+  `Mode2` struct at `subevent_result.rs:233-242` does not declare one). They take serde's
   built-in `[T; N]` path (5 ≤ 32), which is also `serialize_tuple`, so each is emitted as 5
   elements back-to-back with no length prefix.
 
@@ -294,7 +309,7 @@ ABI) but **none** declares `#[serde(tag = ...)]`. serde therefore ignores any ex
 order index**. The `#[repr(u8)]` discriminants are C-ABI values only and are **not** the wire
 values.
 
-Worked example — `DoneStatus` (`mars-bluetooth-hci/src/event/mod.rs:101-110`):
+Worked example — `DoneStatus` (`mars-bluetooth-hci/src/event/mod.rs:152-161`):
 
 | Variant | `#[repr(u8)]` discriminant (C ABI, shown in header) | Wire value (serde declaration order) |
 |---|---|---|
@@ -310,7 +325,7 @@ for `Aborted`/`Reserved`. The same declaration-order rule applies to `Origin`,
 `ModeRoleSpecificInfoKind`.
 
 A particularly subtle case: `ModeRoleSpecificInfoKind::Mode2` is declaration index **5**, so
-its wire value is `0x05` (`subevent_result.rs:257-290`). This is **distinct from** the HCI
+its wire value is `0x05` (`subevent_result.rs:268-295`). This is **distinct from** the HCI
 constant `step_mode::MODE_2 = 0x02` (`mars-bluetooth-hci/src/event/hci_le_cs/constants.rs:46`), which is the raw value that fills the
 `Step.mode: u8` field. Both values appear in the same `Step` struct — `mode` = `0x02` (a raw
 `u8`) followed by `info.kind` = `0x05` (the enum tag) — and must not be conflated. The same
@@ -336,6 +351,22 @@ contract and does not pre-empt that decision; any future change to the envelope 
 be a wire-format-breaking change governed by the same tag-co-pinning model until an in-band
 version mechanism exists.
 
+Persisted frames version independently of that tag-co-pinning model: the persisted-frame
+codec (`mars-bluetooth-hci/src/event/hci_le_cs/persisted_frame.rs`;
+[ADR-0003](adr/0003-versioned-persisted-frame-codec.md)) declares its format name and version
+out-of-band in a `FrameDescriptor` that the caller stores alongside the frame bytes — the
+bytes themselves are the `use_cobs=false` representation above, still with no in-band
+version, and `decode` dispatches only on the declared descriptor. `decode` accepts exactly
+the versions with an explicit dispatch arm — normally only the current version; during a
+release migration the immediately preceding version's decoder arm and fixture directory are
+retained, then removed together once the migration completes. The committed golden fixtures
+(`mars-bluetooth-hci/tests/fixtures/persisted-frames/vN/modeN.postcard.hex`, one per CS Mode
+0–3 per retained version — current-version fixtures are locked byte-for-byte to the current
+encoder, while retained migration-source fixtures are decode-verified through their declared
+descriptor, since the current encoder no longer produces their bytes) are the compatibility
+record; any incompatible change requires a new declared version and an explicit migration
+transition.
+
 ## Related documents
 
 - [ecosystem.md](ecosystem.md) — the three-repo WHAT and the ecosystem data-flow diagram.
@@ -343,6 +374,7 @@ version mechanism exists.
 - [c-embedded-integration.md](c-embedded-integration.md) — the integrator HOW-TO that produces the bytes specified by this contract.
 - [adr/0001-wire-format-postcard-cobs.md](adr/0001-wire-format-postcard-cobs.md) — the WHY: the postcard + COBS decision, the `0x00` sentinel, the `use_cobs=false` unframed variant, and the encode-only / decode-closed boundary.
 - [adr/0002-serialize-only-ffi.md](adr/0002-serialize-only-ffi.md) — the serialize-only C FFI decision.
+- [adr/0003-versioned-persisted-frame-codec.md](adr/0003-versioned-persisted-frame-codec.md) — the versioned persisted-frame storage-replay codec decision (out-of-band `FrameDescriptor` versioning, V1 byte-compatible with the `use_cobs=false` representation).
 - [../CONTRIBUTING.md](../CONTRIBUTING.md) §6 — the documentation structure and Mermaid convention.
 - [../mars-bluetooth-hci/mars_bluetooth_hci.h](../mars-bluetooth-hci/mars_bluetooth_hci.h) — the generated C header; canonical source for field order and types (note the C-ABI ≠ wire caveat in [Payloads](#subeventresultevent-tag-0x00) and [Decoder notes](#enum-tags-are-declaration-order-not-c-repr-discriminants)).
 - [postcard crate docs](https://docs.rs/postcard/1.1.3/) — the normative reference for primitive byte-level encoding.
