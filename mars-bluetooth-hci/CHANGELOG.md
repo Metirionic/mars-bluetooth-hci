@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com), and this project adheres to [Semantic Versioning](https://semver.org).
 
 - - -
+## [mars-bluetooth-hci@0.14.0](https://github.com/Metirionic/mars-bluetooth-hci/compare/a9c94c52774728188a38c0a7c2e76a5cd6447f18..mars-bluetooth-hci@0.14.0) - 2026-09-03
+#### Features
+- add versioned CS subevent persistence frames - ([a9c94c5](https://github.com/Metirionic/mars-bluetooth-hci/commit/a9c94c52774728188a38c0a7c2e76a5cd6447f18)) - Johannes Guertler
+#### Bug Fixes
+- apply critical code-review findings to the persisted-frame codec - ([d568563](https://github.com/Metirionic/mars-bluetooth-hci/commit/d5685632ff1428cab4c53fd39ea316061e5c8568)) - Attila Römer, Claude Code
+#### Documentation
+- record the persisted-frame codec decision (ADR-0003) - ([1c0190a](https://github.com/Metirionic/mars-bluetooth-hci/commit/1c0190ab048fb937bd3c0fa3c0f5d47ac74b3136)) - Attila Römer, Claude Code
+#### Refactoring
+- make HCI persistence API part of the default build - ([850e62a](https://github.com/Metirionic/mars-bluetooth-hci/commit/850e62a92e3ea90627fc016bddb1e06dcdd7ea73)) - Johannes Guertler
+
+- - -
+
 ## [mars-bluetooth-hci@0.13.2](https://github.com/Metirionic/mars-bluetooth-hci/compare/6912e46378d0fc754ec6c9683d84d7c9695b141d..mars-bluetooth-hci@0.13.2) - 2026-08-16
 #### Bug Fixes
 - ![BREAKING](https://img.shields.io/badge/BREAKING-red) sign-extend Mode 0 and FrequencyCompensation offsets from bit 14 - ([6912e46](https://github.com/Metirionic/mars-bluetooth-hci/commit/6912e46378d0fc754ec6c9683d84d7c9695b141d)) - atti, Claude
