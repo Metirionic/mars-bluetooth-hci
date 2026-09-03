@@ -210,7 +210,8 @@ SubeventAbortReason_t;
 /** \brief
  *  Discriminant for [`ModeRoleSpecificInfo`].
  *
- *  The parser populates Mode 0, Mode 1, Mode 2, and Mode 3 variants.
+ *  The parser populates Mode 0, Mode 1, Mode 2, Mode 3, and `Invalid` (the
+ *  `0xFF` sentinel) variants.
  */
 /** \remark Has the same ABI as `uint8_t` **/
 #ifdef DOXYGEN
@@ -264,6 +265,13 @@ enum ModeRoleSpecificInfoKind {
      *  variants above.
      */
     MODE_ROLE_SPECIFIC_INFO_KIND_MODE0_INITIATOR,
+    /** \brief
+     *  A step slot reported without valid data (Step_Mode `0xFF`).
+     *
+     *  Appended at the end to preserve the existing wire values of the
+     *  variants above.
+     */
+    MODE_ROLE_SPECIFIC_INFO_KIND_INVALID,
 }
 #ifndef DOXYGEN
 ; typedef uint8_t
@@ -670,9 +678,12 @@ typedef struct SubeventResultEvent {
     /** \brief
      *  The origin of the data (initiator or reflector).
      *
-     *  Left at [`Origin::Unknown`] by the parser; the caller sets this from
-     *  out-of-band context (which node produced the bytes), as the file-reader
-     *  helper does.
+     *  The origin must be supplied before parsing — through
+     *  [`SubeventResultEvent::try_from_with_origin`] — because Mode 1 and
+     *  Mode 3 steps reject an unknown origin (see
+     *  [`ParseError::UnknownOriginForMode`]). It is not settable afterwards
+     *  for frames carrying Mode 1 or Mode 3 steps: their payload kinds and
+     *  role timings were already selected from the origin during the parse.
      */
     Origin_t origin;
 

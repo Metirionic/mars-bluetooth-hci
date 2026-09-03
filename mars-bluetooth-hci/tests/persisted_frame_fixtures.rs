@@ -3,7 +3,11 @@
 //! Each `vN/modeN.postcard.hex` path declares the frame version and the Mode
 //! carried by its raw, non-COBS Postcard bytes. The test discovers this layout
 //! so a new wire version adds only its fixtures and codec support, not another
-//! hand-maintained Rust fixture list.
+//! hand-maintained Rust fixture list. Every retained version additionally
+//! carries `config-complete.postcard.hex`, which pins the initial-metadata
+//! half of the format (a config-complete event has no steps, hence no mode
+//! file).
+#![cfg(all(feature = "std", feature = "alloc", feature = "libc"))]
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -18,13 +22,17 @@ use mars_bluetooth_hci::event::hci_le_cs::subevent_result::SubeventResultEvent;
 const FIXTURE_ROOT: &str = "tests/fixtures/persisted-frames";
 /// Every retained codec version needs one representative frame per CS mode.
 const EXPECTED_STEP_MODES: [u8; 4] = [0, 1, 2, 3];
+/// The config-complete fixture pins the initial-metadata half of the wire
+/// format, which carries no steps and hence has no mode file.
+const CONFIG_COMPLETE_FIXTURE_FILE: &str = "config-complete.postcard.hex";
 
-/// One fixture discovered from its version directory and mode filename.
+/// One fixture discovered from its version directory and filename.
 #[derive(Debug)]
 struct Fixture {
     path: PathBuf,
     descriptor: FrameDescriptor<'static>,
-    expected_step_mode: u8,
+    /// The expected step mode, or `None` for the config-complete fixture.
+    expected_step_mode: Option<u8>,
 }
 
 /// Returns the absolute fixture-root path for this test invocation.
@@ -118,7 +126,21 @@ fn fixtures_at(root: &Path) -> Vec<Fixture> {
         files.sort_by_key(|entry| entry.file_name());
 
         let mut found_modes = [false; EXPECTED_STEP_MODES.len()];
+        let mut found_config_complete = false;
         for file in files {
+            if file.file_name().to_str() == Some(CONFIG_COMPLETE_FIXTURE_FILE) {
+                assert!(
+                    !found_config_complete,
+                    "duplicate config-complete fixture in version {version}"
+                );
+                found_config_complete = true;
+                fixtures.push(Fixture {
+                    path: file.path(),
+                    descriptor: FrameDescriptor::new(CS_SUBEVENT_FRAME_FORMAT, version),
+                    expected_step_mode: None,
+                });
+                continue;
+            }
             let mode = fixture_mode(&file.path());
             assert!(
                 !found_modes[usize::from(mode)],
@@ -128,13 +150,17 @@ fn fixtures_at(root: &Path) -> Vec<Fixture> {
             fixtures.push(Fixture {
                 path: file.path(),
                 descriptor: FrameDescriptor::new(CS_SUBEVENT_FRAME_FORMAT, version),
-                expected_step_mode: mode,
+                expected_step_mode: Some(mode),
             });
         }
 
         assert!(
             found_modes.iter().all(|found| *found),
             "fixture version {version} contains one fixture for every Mode 0 through 3"
+        );
+        assert!(
+            found_config_complete,
+            "fixture version {version} contains the config-complete fixture"
         );
     }
 
@@ -178,12 +204,44 @@ fn every_fixture_decodes_with_its_declared_descriptor() {
     for fixture in fixtures() {
         let (_, event) = decode_fixture(&fixture);
 
-        assert_eq!(
-            event.steps[0].mode,
-            fixture.expected_step_mode,
-            "{} fixture has its expected step mode",
-            fixture.path.display()
-        );
+        match fixture.expected_step_mode {
+            Some(mode) => {
+                // The representative event must actually exercise its mode:
+                // an all-default (degenerate) fixture would pin nothing.
+                assert!(
+                    event.step_count > 0,
+                    "{} fixture carries at least one step",
+                    fixture.path.display()
+                );
+                assert_eq!(
+                    event.steps[0].mode,
+                    mode,
+                    "{} fixture has its expected step mode",
+                    fixture.path.display()
+                );
+                assert_eq!(
+                    event.steps[0].info.kind.mode(),
+                    mode,
+                    "{} fixture's first step carries its mode's payload kind",
+                    fixture.path.display()
+                );
+            }
+            None => {
+                // The config-complete fixture pins the initial-metadata half
+                // of the format, which carries no steps.
+                assert!(
+                    event.has_initial_meta,
+                    "{} fixture carries the initial metadata",
+                    fixture.path.display()
+                );
+                assert_eq!(
+                    event.step_count,
+                    0,
+                    "{} config-complete fixture carries no steps",
+                    fixture.path.display()
+                );
+            }
+        }
     }
 }
 
@@ -198,8 +256,8 @@ fn current_encoder_matches_current_descriptor_fixtures() {
 
     assert_eq!(
         current_fixtures.len(),
-        EXPECTED_STEP_MODES.len(),
-        "the current descriptor has one fixture for every Mode 0 through 3"
+        EXPECTED_STEP_MODES.len() + 1,
+        "the current descriptor has one fixture for every Mode 0 through 3 plus the config-complete fixture"
     );
 
     for fixture in current_fixtures {
@@ -226,6 +284,7 @@ mod fixture_layout_tests {
         for mode in modes {
             fs::write(directory.join(format!("mode{mode}.postcard.hex")), "00\n").expect("fixture file is written");
         }
+        fs::write(directory.join(CONFIG_COMPLETE_FIXTURE_FILE), "00\n").expect("config-complete fixture is written");
     }
 
     /// Uses the real current descriptor while constructing an invalid source version.

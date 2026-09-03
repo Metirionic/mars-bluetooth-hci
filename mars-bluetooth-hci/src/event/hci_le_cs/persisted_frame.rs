@@ -14,10 +14,11 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
-use postcard::{from_bytes, to_allocvec};
+use postcard::{take_from_bytes, to_allocvec};
 use thiserror::Error;
 
 use super::subevent_result::SubeventResultEvent;
+use crate::event::ParseError;
 use crate::libc::{Serializable, SerializableRef};
 
 /// Stable format name for persisted CS subevent-result frames.
@@ -79,6 +80,14 @@ pub enum FrameCodecError {
     /// Postcard could not decode the declared frame representation.
     #[error("could not decode persisted CS subevent frame: {0}")]
     Decode(#[source] postcard::Error),
+    /// The frame decoded but left unconsumed trailing bytes.
+    #[error("persisted CS subevent frame has trailing bytes")]
+    TrailingBytes,
+    /// The frame's event exceeds the fixed step array or the antenna-path
+    /// table, or a reported step's payload kind does not carry its mode's
+    /// data; see [`SubeventResultEvent::validate_invariants`].
+    #[error("persisted CS subevent frame decodes to an event that violates the subevent-result invariants")]
+    InvalidEvent(#[source] ParseError),
     /// The decoded FFI transport value is not a CS subevent-result event.
     #[error("persisted CS subevent frame contains a different FFI value kind")]
     UnexpectedFrameKind,
@@ -102,7 +111,12 @@ pub fn validate_descriptor(descriptor: FrameDescriptor<'_>) -> Result<(), FrameC
 
 /// Encodes one CS subevent-result event using the current persisted-frame
 /// representation.
+///
+/// The event's counts and step payload kinds are validated first (see
+/// [`SubeventResultEvent::validate_invariants`]), so every frame this codec
+/// writes replays through [`decode`].
 pub fn encode(event: &SubeventResultEvent) -> Result<Vec<u8>, FrameCodecError> {
+    event.validate_invariants().map_err(FrameCodecError::InvalidEvent)?;
     to_allocvec(&SerializableRef::SubeventResultEvent(event)).map_err(FrameCodecError::Encode)
 }
 
@@ -118,10 +132,21 @@ pub fn decode(descriptor: FrameDescriptor<'_>, bytes: &[u8]) -> Result<SubeventR
 
 /// Decodes the first persisted-frame representation through the current HCI
 /// Postcard decoder.
+///
+/// The whole input must be one frame: leftover bytes mean a padded,
+/// over-written, or concatenated storage record, which is rejected instead of
+/// silently decoding its first frame. The decoded event must satisfy the
+/// invariants of [`SubeventResultEvent::validate_invariants`].
 fn decode_v1(bytes: &[u8]) -> Result<SubeventResultEvent, FrameCodecError> {
-    let frame: Serializable = from_bytes(bytes).map_err(FrameCodecError::Decode)?;
+    let (frame, trailing) = take_from_bytes(bytes).map_err(FrameCodecError::Decode)?;
+    if !trailing.is_empty() {
+        return Err(FrameCodecError::TrailingBytes);
+    }
     match frame {
-        Serializable::SubeventResultEvent(event) => Ok(*event),
+        Serializable::SubeventResultEvent(event) => {
+            event.validate_invariants().map_err(FrameCodecError::InvalidEvent)?;
+            Ok(*event)
+        }
         Serializable::LogMessage(_) => Err(FrameCodecError::UnexpectedFrameKind),
     }
 }
@@ -129,8 +154,9 @@ fn decode_v1(bytes: &[u8]) -> Result<SubeventResultEvent, FrameCodecError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::event::ParseError;
     use crate::event::hci_le_cs::constants::le_subevent_code;
-    use crate::event::hci_le_cs::subevent_result::Origin;
+    use crate::event::hci_le_cs::subevent_result::{ModeRoleSpecificInfo, ModeRoleSpecificInfoKind, Origin, Step};
 
     fn representative_event() -> SubeventResultEvent {
         let message = [
@@ -216,5 +242,106 @@ mod tests {
             decode(current_frame_descriptor(), &cobs_framed).is_err(),
             "COBS-framed transport bytes must not decode as a persisted frame"
         );
+    }
+
+    #[test]
+    fn v1_decoding_rejects_frames_with_trailing_bytes() {
+        // Appended garbage (padding, over-write, or a second record) must not
+        // silently decode as one valid event.
+        let event = representative_event();
+        let mut bytes = encode(&event).expect("persisted serializer works");
+        bytes.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
+
+        assert!(matches!(
+            decode(current_frame_descriptor(), &bytes),
+            Err(FrameCodecError::TrailingBytes)
+        ));
+    }
+
+    #[test]
+    fn v1_decoding_rejects_concatenated_frames() {
+        let event = representative_event();
+        let mut bytes = encode(&event).expect("persisted serializer works");
+        bytes.extend_from_slice(&encode(&event).expect("persisted serializer works"));
+
+        assert!(matches!(
+            decode(current_frame_descriptor(), &bytes),
+            Err(FrameCodecError::TrailingBytes)
+        ));
+    }
+
+    #[test]
+    fn v1_decoding_rejects_events_with_broken_invariants() {
+        let event = representative_event();
+
+        // Step count past the fixed step array: splice the step-count varint
+        // (envelope offset 12 in the representative frame) into the varint
+        // for 1000.
+        let mut bytes = encode(&event).expect("persisted serializer works");
+        assert_eq!(
+            bytes[12], 0x01,
+            "the representative frame's step-count varint sits at envelope offset 12"
+        );
+        bytes.splice(12..13, [0xE8, 0x07]);
+        assert!(matches!(
+            decode(current_frame_descriptor(), &bytes),
+            Err(FrameCodecError::InvalidEvent(error)) if matches!(error, ParseError::ExceededMaxStepCount)
+        ));
+
+        // Antenna-path count past the fixed tone table: patch the
+        // antenna-path-count varint (envelope offset 11).
+        let mut bytes = encode(&event).expect("persisted serializer works");
+        assert_eq!(
+            bytes[11], 0x01,
+            "the representative frame's antenna-path-count varint sits at envelope offset 11"
+        );
+        bytes[11] = 0x05;
+        assert!(matches!(
+            decode(current_frame_descriptor(), &bytes),
+            Err(FrameCodecError::InvalidEvent(error)) if matches!(error, ParseError::ExceededMaxAntennaPathCount)
+        ));
+    }
+
+    #[test]
+    fn v1_decoding_rejects_truncated_frames() {
+        let event = representative_event();
+        let bytes = encode(&event).expect("persisted serializer works");
+
+        assert!(matches!(
+            decode(current_frame_descriptor(), &bytes[..bytes.len() / 2]),
+            Err(FrameCodecError::Decode(_))
+        ));
+    }
+
+    #[test]
+    fn encoding_rejects_events_with_broken_invariants() {
+        let mut event = representative_event();
+        event.step_count = 200;
+
+        assert!(matches!(encode(&event), Err(FrameCodecError::InvalidEvent(_))));
+    }
+
+    #[test]
+    fn encoding_rejects_fabricated_pre_migration_steps() {
+        // A pre-PR build parsed a 0xFF slot by collapsing it, leaving a
+        // fabricated default step (mode 0x00, kind Mode2) inside the step
+        // window; replaying such a record must fail loudly instead of
+        // returning fabricated measurement data.
+        let mut event = representative_event();
+        event.steps[1] = Step {
+            mode: 0x00,
+            channel: 0x05,
+            info: ModeRoleSpecificInfo {
+                kind: ModeRoleSpecificInfoKind::Mode2,
+                ..Default::default()
+            },
+        };
+        event.step_count = 2;
+
+        assert!(matches!(
+            encode(&event),
+            Err(FrameCodecError::InvalidEvent(error))
+                if matches!(error, ParseError::StepKindModeMismatch { index: 1, mode: 0x00, .. })
+        ));
     }
 }
