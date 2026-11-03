@@ -340,3 +340,12 @@ mod fixture_layout_tests {
         let _ = fixtures_at(root.path());
     }
 }
+
+#[test]
+fn historical_v1_frames_are_explicitly_unsupported() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/legacy-persisted-frames/v1");
+    for entry in fs::read_dir(root).unwrap() {
+        let bytes = hex::decode(fs::read_to_string(entry.unwrap().path()).unwrap().trim()).unwrap();
+        assert!(decode(FrameDescriptor::new(CS_SUBEVENT_FRAME_FORMAT, 1), &bytes).is_err());
+    }
+}

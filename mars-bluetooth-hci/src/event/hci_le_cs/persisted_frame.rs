@@ -25,7 +25,7 @@ use crate::libc::{Serializable, SerializableRef};
 pub const CS_SUBEVENT_FRAME_FORMAT: &str = "mars-hci-cs-subevent";
 
 /// Current persisted CS subevent-result frame version.
-pub const CURRENT_CS_SUBEVENT_FRAME_VERSION: u16 = 1;
+pub const CURRENT_CS_SUBEVENT_FRAME_VERSION: u16 = super::subevent_result::SUBEVENT_RESULT_FORMAT_VERSION;
 
 /// Identifies one persisted CS subevent-result frame format.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -125,19 +125,19 @@ pub fn encode(event: &SubeventResultEvent) -> Result<Vec<u8>, FrameCodecError> {
 pub fn decode(descriptor: FrameDescriptor<'_>, bytes: &[u8]) -> Result<SubeventResultEvent, FrameCodecError> {
     validate_descriptor(descriptor)?;
     match descriptor.version() {
-        CURRENT_CS_SUBEVENT_FRAME_VERSION => decode_v1(bytes),
+        CURRENT_CS_SUBEVENT_FRAME_VERSION => decode_v2(bytes),
         _ => unreachable!("descriptor validation permits only the current frame version"),
     }
 }
 
-/// Decodes the first persisted-frame representation through the current HCI
+/// Decodes the compact persisted-frame representation through the current HCI
 /// Postcard decoder.
 ///
 /// The whole input must be one frame: leftover bytes mean a padded,
 /// over-written, or concatenated storage record, which is rejected instead of
 /// silently decoding its first frame. The decoded event must satisfy the
 /// invariants of [`SubeventResultEvent::validate_invariants`].
-fn decode_v1(bytes: &[u8]) -> Result<SubeventResultEvent, FrameCodecError> {
+fn decode_v2(bytes: &[u8]) -> Result<SubeventResultEvent, FrameCodecError> {
     let (frame, trailing) = take_from_bytes(bytes).map_err(FrameCodecError::Decode)?;
     if !trailing.is_empty() {
         return Err(FrameCodecError::TrailingBytes);
@@ -184,7 +184,7 @@ mod tests {
     }
 
     #[test]
-    fn v1_encoding_matches_the_existing_hci_ffi_serializer() {
+    fn v2_encoding_matches_the_existing_hci_ffi_serializer() {
         let event = representative_event();
 
         let existing: Vec<u8> = crate::libc::serialize_subevent_result_event(&event, false).into();
@@ -194,7 +194,7 @@ mod tests {
     }
 
     #[test]
-    fn v1_decoding_round_trips_the_current_hci_encoding() {
+    fn v2_decoding_round_trips_the_current_hci_encoding() {
         let event = representative_event();
         let bytes = encode(&event).expect("persisted serializer works");
 
@@ -245,7 +245,7 @@ mod tests {
     }
 
     #[test]
-    fn v1_decoding_rejects_frames_with_trailing_bytes() {
+    fn v2_decoding_rejects_frames_with_trailing_bytes() {
         // Appended garbage (padding, over-write, or a second record) must not
         // silently decode as one valid event.
         let event = representative_event();
@@ -259,7 +259,7 @@ mod tests {
     }
 
     #[test]
-    fn v1_decoding_rejects_concatenated_frames() {
+    fn v2_decoding_rejects_concatenated_frames() {
         let event = representative_event();
         let mut bytes = encode(&event).expect("persisted serializer works");
         bytes.extend_from_slice(&encode(&event).expect("persisted serializer works"));
@@ -271,31 +271,31 @@ mod tests {
     }
 
     #[test]
-    fn v1_decoding_rejects_events_with_broken_invariants() {
+    fn v2_decoding_rejects_events_with_broken_invariants() {
         let event = representative_event();
 
         // Step count past the fixed step array: splice the step-count varint
-        // (envelope offset 12 in the representative frame) into the varint
+        // (envelope offset 13 in the representative frame) into the varint
         // for 1000.
         let mut bytes = encode(&event).expect("persisted serializer works");
         assert_eq!(
-            bytes[12], 0x01,
-            "the representative frame's step-count varint sits at envelope offset 12"
+            bytes[13], 0x01,
+            "the representative frame's step-count varint sits at envelope offset 13"
         );
-        bytes.splice(12..13, [0xE8, 0x07]);
+        bytes.splice(13..14, [0xE8, 0x07]);
         assert!(matches!(
             decode(current_frame_descriptor(), &bytes),
-            Err(FrameCodecError::InvalidEvent(error)) if matches!(error, ParseError::ExceededMaxStepCount)
+            Err(FrameCodecError::Decode(_))
         ));
 
         // Antenna-path count past the fixed tone table: patch the
-        // antenna-path-count varint (envelope offset 11).
+        // antenna-path-count varint (envelope offset 12).
         let mut bytes = encode(&event).expect("persisted serializer works");
         assert_eq!(
-            bytes[11], 0x01,
-            "the representative frame's antenna-path-count varint sits at envelope offset 11"
+            bytes[12], 0x01,
+            "the representative frame's antenna-path-count varint sits at envelope offset 12"
         );
-        bytes[11] = 0x05;
+        bytes[12] = 0x05;
         assert!(matches!(
             decode(current_frame_descriptor(), &bytes),
             Err(FrameCodecError::InvalidEvent(error)) if matches!(error, ParseError::ExceededMaxAntennaPathCount)
@@ -303,7 +303,7 @@ mod tests {
     }
 
     #[test]
-    fn v1_decoding_rejects_truncated_frames() {
+    fn v2_decoding_rejects_truncated_frames() {
         let event = representative_event();
         let bytes = encode(&event).expect("persisted serializer works");
 

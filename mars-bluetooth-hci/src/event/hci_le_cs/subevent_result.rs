@@ -7,7 +7,6 @@ use core::result::Result;
 
 use safer_ffi::derive_ReprC;
 use serde::{Deserialize, Serialize};
-use serde_with::serde_as;
 
 pub use crate::event::hci_le_cs::constants::antenna_permutation;
 pub use crate::event::hci_le_cs::constants::cs_params::{MAX_ANTENNA_PATH_COUNT, MAX_NUM_STEPS_REPORTED};
@@ -319,7 +318,7 @@ impl ModeRoleSpecificInfoKind {
 /// Mode- and role-specific information.
 ///
 /// The payload fields are selected by `kind`.
-#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy)]
 #[derive_ReprC]
 #[repr(C)]
 pub struct ModeRoleSpecificInfo {
@@ -341,6 +340,59 @@ pub struct ModeRoleSpecificInfo {
     /// and also for Mode 3 variants (the tone fields are populated alongside
     /// Mode 1 packet fields in `mode1`).
     pub mode2: Mode2,
+}
+
+// The C layout stays fixed; only the selected payload crosses the wire.
+impl Serialize for ModeRoleSpecificInfo {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeTuple;
+        let mut tuple = serializer.serialize_tuple(2)?;
+        tuple.serialize_element(&self.kind)?;
+        match self.kind.mode() {
+            step_mode::MODE_0 => tuple.serialize_element(&self.mode0)?,
+            step_mode::MODE_1 => tuple.serialize_element(&self.mode1)?,
+            step_mode::MODE_2 => tuple.serialize_element(&self.mode2)?,
+            step_mode::MODE_3 => tuple.serialize_element(&(self.mode1, self.mode2))?,
+            _ => tuple.serialize_element(&())?,
+        }
+        tuple.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for ModeRoleSpecificInfo {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct PayloadVisitor;
+        impl<'de> serde::de::Visitor<'de> for PayloadVisitor {
+            type Value = ModeRoleSpecificInfo;
+            fn expecting(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                f.write_str("a CS payload kind and its selected data")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                fn required<'de, T: Deserialize<'de>, A: serde::de::SeqAccess<'de>>(
+                    seq: &mut A,
+                ) -> Result<T, A::Error> {
+                    seq.next_element()?
+                        .ok_or_else(|| serde::de::Error::custom("missing CS payload"))
+                }
+                let kind: ModeRoleSpecificInfoKind = required(&mut seq)?;
+                let mut info = ModeRoleSpecificInfo {
+                    kind,
+                    ..Default::default()
+                };
+                match kind.mode() {
+                    step_mode::MODE_0 => info.mode0 = required(&mut seq)?,
+                    step_mode::MODE_1 => info.mode1 = required(&mut seq)?,
+                    step_mode::MODE_2 => info.mode2 = required(&mut seq)?,
+                    step_mode::MODE_3 => (info.mode1, info.mode2) = required(&mut seq)?,
+                    _ => {
+                        let _: () = required(&mut seq)?;
+                    }
+                }
+                Ok(info)
+            }
+        }
+        deserializer.deserialize_tuple(2, PayloadVisitor)
+    }
 }
 
 /// Data that characterizes a step.
@@ -392,8 +444,7 @@ pub enum Origin {
 /// For the latter, the [`SubeventResultEvent::initial_meta`] is `None`.
 ///
 /// See the `TryFrom<&[u8]>` implementation for a parse-from-bytes example.
-#[serde_as]
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone)]
 #[derive_ReprC]
 #[repr(C)]
 pub struct SubeventResultEvent {
@@ -439,13 +490,139 @@ pub struct SubeventResultEvent {
     /// The number of steps for the subevent.
     pub step_count: usize,
     /// The step data.
-    #[serde_as(as = "[_; MAX_NUM_STEPS_REPORTED]")]
     pub steps: [Step; MAX_NUM_STEPS_REPORTED],
 
     /// Metadata that only the first subevent (not the "continue" variant) holds.
     pub initial_meta: InitialMeta,
     /// If true, initial metadata is available.
     pub has_initial_meta: bool,
+}
+
+/// Version of the compact CS subevent wire representation. Old fixed-array frames are unsupported.
+pub const SUBEVENT_RESULT_FORMAT_VERSION: u16 = 2;
+
+#[derive(Serialize)]
+struct WireVersion(u16);
+
+impl<'de> Deserialize<'de> for WireVersion {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let version = u16::deserialize(deserializer)?;
+        if version != SUBEVENT_RESULT_FORMAT_VERSION {
+            return Err(serde::de::Error::custom("unsupported CS subevent wire version"));
+        }
+        Ok(Self(version))
+    }
+}
+
+// Separate from the C ABI: only reported steps are encoded on the wire.
+#[derive(Serialize, Deserialize)]
+struct WireEvent<S> {
+    version: WireVersion,
+    origin: Origin,
+    local_mac: u64,
+    peer_mac: u64,
+    connection_handle: u16,
+    config_id: u8,
+    has_config_id: bool,
+    procedure_done_status: ProcedureDoneStatus,
+    procedure_abort_reason: ProcedureAbortReason,
+    subevent_done_status: SubeventDoneStatus,
+    subevent_abort_reason: SubeventAbortReason,
+    antenna_path_count: usize,
+    step_count: usize,
+    steps: S,
+    initial_meta: InitialMeta,
+    has_initial_meta: bool,
+}
+
+struct CompactSteps {
+    values: [Step; MAX_NUM_STEPS_REPORTED],
+    len: usize,
+}
+
+impl<'de> Deserialize<'de> for CompactSteps {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct StepsVisitor;
+        impl<'de> serde::de::Visitor<'de> for StepsVisitor {
+            type Value = CompactSteps;
+
+            fn expecting(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                formatter.write_str("at most 160 CS steps")
+            }
+
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut sequence: A) -> Result<Self::Value, A::Error> {
+                if sequence.size_hint().is_some_and(|len| len > MAX_NUM_STEPS_REPORTED) {
+                    return Err(serde::de::Error::custom("too many CS steps"));
+                }
+                let mut result = CompactSteps {
+                    values: [Step::default(); MAX_NUM_STEPS_REPORTED],
+                    len: 0,
+                };
+                while let Some(step) = sequence.next_element::<Step>()? {
+                    if result.len == MAX_NUM_STEPS_REPORTED {
+                        return Err(serde::de::Error::custom("too many CS steps"));
+                    }
+                    result.values[result.len] = step;
+                    result.len += 1;
+                }
+                Ok(result)
+            }
+        }
+        deserializer.deserialize_seq(StepsVisitor)
+    }
+}
+
+impl Serialize for SubeventResultEvent {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        if self.step_count > MAX_NUM_STEPS_REPORTED {
+            return Err(serde::ser::Error::custom("too many CS steps"));
+        }
+        WireEvent {
+            version: WireVersion(SUBEVENT_RESULT_FORMAT_VERSION),
+            origin: self.origin,
+            local_mac: self.local_mac,
+            peer_mac: self.peer_mac,
+            connection_handle: self.connection_handle,
+            config_id: self.config_id,
+            has_config_id: self.has_config_id,
+            procedure_done_status: self.procedure_done_status.clone(),
+            procedure_abort_reason: self.procedure_abort_reason.clone(),
+            subevent_done_status: self.subevent_done_status.clone(),
+            subevent_abort_reason: self.subevent_abort_reason.clone(),
+            antenna_path_count: self.antenna_path_count,
+            step_count: self.step_count,
+            steps: &self.steps[..self.step_count],
+            initial_meta: self.initial_meta.clone(),
+            has_initial_meta: self.has_initial_meta,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for SubeventResultEvent {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let wire = WireEvent::<CompactSteps>::deserialize(deserializer)?;
+        if wire.step_count != wire.steps.len {
+            return Err(serde::de::Error::custom("CS step count does not match payload"));
+        }
+        Ok(Self {
+            origin: wire.origin,
+            local_mac: wire.local_mac,
+            peer_mac: wire.peer_mac,
+            connection_handle: wire.connection_handle,
+            config_id: wire.config_id,
+            has_config_id: wire.has_config_id,
+            procedure_done_status: wire.procedure_done_status,
+            procedure_abort_reason: wire.procedure_abort_reason,
+            subevent_done_status: wire.subevent_done_status,
+            subevent_abort_reason: wire.subevent_abort_reason,
+            antenna_path_count: wire.antenna_path_count,
+            step_count: wire.step_count,
+            steps: wire.steps.values,
+            initial_meta: wire.initial_meta,
+            has_initial_meta: wire.has_initial_meta,
+        })
+    }
 }
 
 impl SubeventResultEvent {
@@ -1536,5 +1713,114 @@ mod tests {
         let error = SubeventResultEvent::try_from_with_origin(message.as_slice(), Origin::Unknown)
             .expect_err("an over-range antenna path count is rejected");
         assert!(matches!(error, ParseError::ExceededMaxAntennaPathCount));
+    }
+}
+
+#[cfg(test)]
+mod compact_wire_tests {
+    use super::*;
+
+    fn event(count: usize) -> SubeventResultEvent {
+        let message = [le_subevent_code::CS_SUBEVENT_RESULT_CONTINUE, 1, 0, 7, 0, 0, 0, 1, 0];
+        let mut event = SubeventResultEvent::try_from_with_origin(&message, Origin::Initiator).unwrap();
+        event.step_count = count;
+        for (index, step) in event.steps.iter_mut().enumerate().take(count) {
+            step.mode = 2;
+            step.channel = index as u8;
+        }
+        event
+    }
+
+    #[test]
+    fn compact_payload_round_trips_boundary_counts_without_unused_steps() {
+        for count in [0, 1, 15, 60, MAX_NUM_STEPS_REPORTED] {
+            let mut original = event(count);
+            let bytes = postcard::to_allocvec(&original).unwrap();
+            if count < MAX_NUM_STEPS_REPORTED {
+                original.steps[count].channel = 255;
+                assert_eq!(postcard::to_allocvec(&original).unwrap(), bytes);
+            }
+            let decoded: SubeventResultEvent = postcard::from_bytes(&bytes).unwrap();
+            assert_eq!(decoded.step_count, count);
+            for index in 0..count {
+                assert_eq!(decoded.steps[index].channel, index as u8);
+            }
+            if count < MAX_NUM_STEPS_REPORTED {
+                assert_eq!(decoded.steps[count].channel, 0);
+            }
+            assert_eq!(postcard::to_allocvec(&decoded).unwrap(), bytes);
+        }
+        let short = postcard::to_allocvec(&event(15)).unwrap().len();
+        let full = postcard::to_allocvec(&event(160)).unwrap().len();
+        assert!(short * 8 < full, "15-step frame {short} B, 160-step frame {full} B");
+        println!("compact sizes: 15 steps = {short} B; 160 steps = {full} B");
+    }
+
+    #[test]
+    fn mixed_modes_keep_only_selected_payloads() {
+        use ModeRoleSpecificInfoKind::*;
+        let kinds = [
+            Mode0Initiator,
+            Mode0Reflector,
+            Mode1Initiator,
+            Mode1InitiatorPbrRtt,
+            Mode1Reflector,
+            Mode1ReflectorPbrRtt,
+            Mode2,
+            Mode3Initiator,
+            Mode3InitiatorPbrRtt,
+            Mode3Reflector,
+            Mode3ReflectorPbrRtt,
+            Invalid,
+        ];
+        let mut original = event(kinds.len());
+        for (index, kind) in kinds.into_iter().enumerate() {
+            let info = &mut original.steps[index].info;
+            info.kind = kind;
+            info.mode0.measured_freq_offset = 1234;
+            info.mode1.timing.role_specific_timing_value = -123;
+            info.mode2.phase_correction_terms[0].i = 12.5;
+            original.steps[index].mode = kind.mode();
+        }
+        let bytes = postcard::to_allocvec(&original).unwrap();
+        let decoded: SubeventResultEvent = postcard::from_bytes(&bytes).unwrap();
+        decoded.validate_invariants().unwrap();
+        for index in 0..kinds.len() {
+            let a = &original.steps[index];
+            let b = &decoded.steps[index];
+            assert_eq!(a.mode, b.mode);
+            assert_eq!(a.info.kind, b.info.kind);
+            assert_eq!(b.info.mode0.measured_freq_offset, if a.mode == 0 { 1234 } else { 0 });
+            assert_eq!(
+                b.info.mode1.timing.role_specific_timing_value,
+                if a.mode == 1 || a.mode == 3 { -123 } else { 0 }
+            );
+            assert_eq!(
+                b.info.mode2.phase_correction_terms[0].i,
+                if a.mode == 2 || a.mode == 3 { 12.5 } else { 0.0 }
+            );
+        }
+        assert_eq!(postcard::to_allocvec(&decoded).unwrap(), bytes);
+    }
+
+    #[test]
+    fn compact_decoder_rejects_bad_version_counts_and_truncation() {
+        let bytes = postcard::to_allocvec(&event(1)).unwrap();
+        let mut wrong_version = bytes.clone();
+        for version in [1, 3] {
+            wrong_version[0] = version;
+            assert!(postcard::from_bytes::<SubeventResultEvent>(&wrong_version).is_err());
+        }
+        assert!(postcard::from_bytes::<SubeventResultEvent>(&bytes[..bytes.len() - 1]).is_err());
+        assert!(postcard::to_allocvec(&event(161)).is_err());
+        // Locate the count fields using the identical empty-event header.
+        let empty = postcard::to_allocvec(&event(0)).unwrap();
+        let count_offset = empty.iter().zip(&bytes).position(|(a, b)| a != b).unwrap();
+        let mut mismatch = bytes.clone();
+        mismatch[count_offset] = 2;
+        assert!(postcard::from_bytes::<SubeventResultEvent>(&mismatch).is_err());
+        let mut oversized = bytes.clone();
+        oversized.splice(count_offset + 1..count_offset + 2, [0xa1, 0x01]);
+        assert!(postcard::from_bytes::<SubeventResultEvent>(&oversized).is_err());
     }
 }

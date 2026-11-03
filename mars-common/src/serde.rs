@@ -12,8 +12,9 @@ use serde::{Deserialize, Serialize};
 ///
 /// Bump this when the [`BinaryData`] struct layout changes in a way that
 /// breaks postcard deserialization of previously recorded .bin files.
-/// This includes: adding/removing/reordering fields, changing field types.
-pub const BINARY_FORMAT_VERSION: u8 = 1;
+/// This includes: adding/removing/reordering fields, changing field types, or
+/// changing the embedded measurement frame encoding.
+pub const BINARY_FORMAT_VERSION: u8 = 2;
 
 /// Errors that can occur when deserializing [`BinaryData`].
 #[derive(Debug, thiserror::Error)]
