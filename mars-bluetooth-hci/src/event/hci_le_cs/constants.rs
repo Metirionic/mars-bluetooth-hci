@@ -52,6 +52,8 @@ pub mod step_mode {
 
 /// CS procedure parameters.
 pub mod cs_params {
+    /// Number of Bluetooth CS channel indices, including unused channels (0 through 78).
+    pub const CS_CHANNEL_COUNT: usize = 79;
     /// Maximum number of steps reported (per Bluetooth CS standard).
     pub const MAX_NUM_STEPS_REPORTED: usize = 160;
     /// Maximum number of antenna paths.
