@@ -4,10 +4,34 @@ status: accepted
 
 # Versioned persisted-frame codec, separate from the UART wire path
 
-Decoded CS subevent-result frames need a versioned storage-replay contract that neither the UART wire path nor the C FFI provides, so this repo adds a dedicated persistence codec for issue #51 — `encode`/`decode` in [`mars-bluetooth-hci/src/event/hci_le_cs/persisted_frame.rs`](../../mars-bluetooth-hci/src/event/hci_le_cs/persisted_frame.rs), default host configuration only (`std`+`alloc`+`libc`, deliberately unavailable to the embedded no-std feature set). V1 frames are byte-compatible with the FFI serializer's non-COBS postcard representation: `encode` serializes the same borrowed envelope (`SerializableRef::SubeventResultEvent`) that `serialize_subevent_result_event(&event, use_cobs=false)` emits, so a persisted frame is exactly an FFI serialization envelope whose bytes are jointly defined by the declaration order of `libc::Serializable` and the serde derives of `SubeventResultEvent` — any incompatible change requires a new declared version. Decode deserializes the same `Serializable` envelope and dispatches on its variants; the storage contract stays deliberately narrower than the general FFI surface. Versioning is out-of-band through a `FrameDescriptor` (format name `mars-hci-cs-subevent`, current version 1) — `encode` emits bare frame bytes with no in-band version, the caller stores the descriptor returned by `current_frame_descriptor()` alongside the bytes (e.g. in the storage record or file name), and `decode` dispatches only on the declared descriptor, never guessing from the bytes; this decides nothing about in-band versioning for the UART wire path, which remains open as #15. Decode is strict — the whole input must be one frame: trailing bytes (padded, over-written, or concatenated storage records) are rejected with `TrailingBytes`, while a truncated record fails inside postcard and surfaces as `Decode`; a log-message envelope is rejected with `UnexpectedFrameKind`. `encode` and `decode` both re-validate the parser invariants of the event (the fixed-array counts and that every reported step's payload kind carries its mode's data), so every frame the codec writes replays and a corrupted or foreign-encoder frame fails loudly at replay. `decode` accepts exactly the versions with an explicit dispatch arm, normally only the current version; during a release migration the immediately preceding version's decoder arm and fixture directory are retained, and both are removed in the same change once the migration completes. Compatibility is pinned by committed golden fixtures — `mars-bluetooth-hci/tests/fixtures/persisted-frames/vN/`, one `modeN.postcard.hex` per CS Mode 0–3 plus a `config-complete.postcard.hex` per retained version: the current version's fixtures are locked byte-for-byte to the current encoder, and retained migration-source fixtures are decode-verified through their declared descriptor. Together they are the compatibility record. The known V1 cost is accepted deliberately: the event's fixed `[Step; 160]` array serializes in full, so every frame is ~13.3 KB regardless of `step_count`; that is the price of byte-compatibility, and compacting frames requires a new declared version. See [`docs/wire-format.md`](../wire-format.md) §Versioning and compatibility and [`docs/architecture.md`](../architecture.md) §Persisted-frame replay for the contract consequences.
+CS subevent results need a storage-replay contract with explicit format selection
+and strict validation. The Rust-only
+[`persisted_frame`](../../mars-bluetooth-hci/src/event/hci_le_cs/persisted_frame.rs)
+codec provides `encode` and `decode` in host builds (`std`+`alloc`+`libc`).
 
-## Considered Options
+Persisted frames use the FFI serializer's non-COBS bytes. Callers store a
+`FrameDescriptor` alongside each frame so replay can select a supported format
+without guessing from the bytes. Decode rejects unsupported descriptors,
+trailing bytes, truncated frames, and non-CS envelopes. Encode and decode both
+validate event invariants.
 
-- **In-band version byte in every persisted frame.** Rejected for V1: byte-compatibility with the existing FFI non-COBS representation is the point of the contract; the wire-path question remains open as #15.
-- **The general FFI `Serializable` enum as the public storage contract.** Rejected: the storage contract must be independently versioned and must not drag the FFI surface along with every change; decode consumes the `Serializable` envelope without adopting it as the storage contract.
-- **Compact variable-length step serialization.** Rejected for V1: it breaks byte-compatibility; the fixed-array cost (~13.3 KB per frame regardless of `step_count`) is documented instead, and compaction requires a new declared version.
+Incompatible changes require a new declared version and an explicit migration
+transition. During migration, retain the preceding decoder and its fixtures;
+remove both once migration completes. Golden fixtures pin the current encoder
+bytes and verify any retained migration decoder.
+
+## Version 2
+
+V2 uses a compact, versioned CS representation while preserving the C ABI.
+The current codec supports only v2 and provides no v1 converter. Existing v1
+recordings require the old implementation to decode before re-encoding with v2.
+See [wire-format.md](../wire-format.md) for the layout, descriptors, and fixtures.
+
+## Considered options
+
+- **Use the general FFI enum as the storage contract.** Rejected: storage accepts
+  only CS subevent results and needs explicit format selection.
+- **Use only an in-band version.** Rejected for V1 to preserve its existing FFI
+  bytes. V2 includes a CS payload version but retains the storage descriptor.
+- **Compact the original fixed-array representation.** Deferred from V1 to V2
+  because it changes the wire format.
