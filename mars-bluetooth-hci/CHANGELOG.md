@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com), and this project adheres to [Semantic Versioning](https://semver.org).
 
 - - -
+## [mars-bluetooth-hci@0.15.0](https://github.com/Metirionic/mars-bluetooth-hci/compare/d72140ff99dd696d9605a8c5c26767484b06f543..mars-bluetooth-hci@0.15.0) - 2026-11-16
+#### Features
+- serialization just sends used tone data fields - ([c576c1e](https://github.com/Metirionic/mars-bluetooth-hci/commit/c576c1e072f724f1f87c4ffa9a5d67b84bb4a744)) - Tim Taubert
+
+- - -
+
 ## [mars-bluetooth-hci@0.14.0](https://github.com/Metirionic/mars-bluetooth-hci/compare/a9c94c52774728188a38c0a7c2e76a5cd6447f18..mars-bluetooth-hci@0.14.0) - 2026-09-03
 #### Features
 - add versioned CS subevent persistence frames - ([a9c94c5](https://github.com/Metirionic/mars-bluetooth-hci/commit/a9c94c52774728188a38c0a7c2e76a5cd6447f18)) - Johannes Guertler

@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com), and this project adheres to [Semantic Versioning](https://semver.org).
 
 - - -
+## [mars-common@0.3.0](https://github.com/Metirionic/mars-bluetooth-hci/compare/b866191d22de6459885697ed7eb4e0778cda556c..mars-common@0.3.0) - 2026-11-16
+#### Features
+- serialization just sends used tone data fields - ([c576c1e](https://github.com/Metirionic/mars-bluetooth-hci/commit/c576c1e072f724f1f87c4ffa9a5d67b84bb4a744)) - Tim Taubert
+
+- - -
+
 ## [mars-common@0.2.0](https://github.com/Metirionic/mars-bluetooth-hci/compare/8c7a1fc88ef3b6ef37b8d9cddd01b4825f528c23..mars-common@0.2.0) - 2026-06-15
 #### Features
 - ![BREAKING](https://img.shields.io/badge/BREAKING-red) add version field to BinaryData file format - ([8c7a1fc](https://github.com/Metirionic/mars-bluetooth-hci/commit/8c7a1fc88ef3b6ef37b8d9cddd01b4825f528c23)) - Adrian Figueroa
