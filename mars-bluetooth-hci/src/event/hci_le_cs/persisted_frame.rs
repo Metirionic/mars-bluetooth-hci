@@ -17,15 +17,12 @@ use alloc::vec::Vec;
 use postcard::{take_from_bytes, to_allocvec};
 use thiserror::Error;
 
-use super::subevent_result::SubeventResultEvent;
+use super::subevent_result::{SUBEVENT_RESULT_FORMAT_VERSION, SubeventResultEvent};
 use crate::event::ParseError;
 use crate::libc::{Serializable, SerializableRef};
 
 /// Stable format name for persisted CS subevent-result frames.
 pub const CS_SUBEVENT_FRAME_FORMAT: &str = "mars-hci-cs-subevent";
-
-/// Current persisted CS subevent-result frame version.
-pub const CURRENT_CS_SUBEVENT_FRAME_VERSION: u16 = super::subevent_result::SUBEVENT_RESULT_FORMAT_VERSION;
 
 /// Identifies one persisted CS subevent-result frame format.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -55,7 +52,7 @@ impl<'a> FrameDescriptor<'a> {
 
 /// Descriptor emitted by the current CS subevent-result frame encoder.
 pub const CURRENT_CS_SUBEVENT_FRAME_DESCRIPTOR: FrameDescriptor<'static> =
-    FrameDescriptor::new(CS_SUBEVENT_FRAME_FORMAT, CURRENT_CS_SUBEVENT_FRAME_VERSION);
+    FrameDescriptor::new(CS_SUBEVENT_FRAME_FORMAT, SUBEVENT_RESULT_FORMAT_VERSION);
 
 /// Returns the descriptor emitted by the current frame encoder.
 pub const fn current_frame_descriptor() -> FrameDescriptor<'static> {
@@ -101,7 +98,7 @@ pub fn validate_descriptor(descriptor: FrameDescriptor<'_>) -> Result<(), FrameC
     if descriptor.format_name() != CS_SUBEVENT_FRAME_FORMAT {
         return Err(FrameCodecError::UnsupportedFormat);
     }
-    if descriptor.version() != CURRENT_CS_SUBEVENT_FRAME_VERSION {
+    if descriptor.version() != SUBEVENT_RESULT_FORMAT_VERSION {
         return Err(FrameCodecError::UnsupportedVersion {
             version: descriptor.version(),
         });
@@ -125,7 +122,7 @@ pub fn encode(event: &SubeventResultEvent) -> Result<Vec<u8>, FrameCodecError> {
 pub fn decode(descriptor: FrameDescriptor<'_>, bytes: &[u8]) -> Result<SubeventResultEvent, FrameCodecError> {
     validate_descriptor(descriptor)?;
     match descriptor.version() {
-        CURRENT_CS_SUBEVENT_FRAME_VERSION => decode_v2(bytes),
+        SUBEVENT_RESULT_FORMAT_VERSION => decode_v2(bytes),
         _ => unreachable!("descriptor validation permits only the current frame version"),
     }
 }
@@ -210,14 +207,14 @@ mod tests {
 
         assert!(matches!(
             decode(
-                FrameDescriptor::new("different-format", CURRENT_CS_SUBEVENT_FRAME_VERSION),
+                FrameDescriptor::new("different-format", SUBEVENT_RESULT_FORMAT_VERSION),
                 &bytes
             ),
             Err(FrameCodecError::UnsupportedFormat)
         ));
         assert!(matches!(
             decode(
-                FrameDescriptor::new(CS_SUBEVENT_FRAME_FORMAT, CURRENT_CS_SUBEVENT_FRAME_VERSION + 1),
+                FrameDescriptor::new(CS_SUBEVENT_FRAME_FORMAT, SUBEVENT_RESULT_FORMAT_VERSION + 1),
                 &bytes
             ),
             Err(FrameCodecError::UnsupportedVersion { .. })

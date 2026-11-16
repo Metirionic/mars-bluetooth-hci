@@ -16,6 +16,9 @@ use crate::event::{
     ReferencePowerLevel, SubeventAbortReason, SubeventDoneStatus, SubeventInfo, ToneQualityIndicator, sign_extend_15,
 };
 
+/// Current version of the serialized CS subevent-result payload.
+pub const SUBEVENT_RESULT_FORMAT_VERSION: u16 = 2;
+
 /// The phase correction term (PCT), composed of I and Q components.
 #[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
 #[derive_ReprC]
@@ -498,9 +501,7 @@ pub struct SubeventResultEvent {
     pub has_initial_meta: bool,
 }
 
-/// Version of the compact CS subevent wire representation. Old fixed-array frames are unsupported.
-pub const SUBEVENT_RESULT_FORMAT_VERSION: u16 = 2;
-
+/// Payload version checked before deserializing event fields.
 #[derive(Serialize)]
 struct WireVersion(u16);
 
@@ -514,29 +515,48 @@ impl<'de> Deserialize<'de> for WireVersion {
     }
 }
 
-// Separate from the C ABI: only reported steps are encoded on the wire.
+/// Serialized event representation with only reported steps.
 #[derive(Serialize, Deserialize)]
 struct WireEvent<S> {
+    /// CS payload format version.
     version: WireVersion,
+    /// Role of the measurement source.
     origin: Origin,
+    /// Local node's MAC address.
     local_mac: u64,
+    /// Peer node's MAC address.
     peer_mac: u64,
+    /// Connection associated with the event.
     connection_handle: u16,
+    /// CS configuration identifier.
     config_id: u8,
+    /// Whether the configuration identifier is valid.
     has_config_id: bool,
+    /// Procedure completion status.
     procedure_done_status: ProcedureDoneStatus,
+    /// Reason for aborting the procedure.
     procedure_abort_reason: ProcedureAbortReason,
+    /// Subevent completion status.
     subevent_done_status: SubeventDoneStatus,
+    /// Reason for aborting the subevent.
     subevent_abort_reason: SubeventAbortReason,
+    /// Number of antenna paths.
     antenna_path_count: usize,
+    /// Number of reported steps.
     step_count: usize,
+    /// Length-prefixed sequence of reported steps.
     steps: S,
+    /// Metadata from the initial subevent.
     initial_meta: InitialMeta,
+    /// Whether initial metadata is available.
     has_initial_meta: bool,
 }
 
+/// Reported steps decoded into fixed-capacity storage.
 struct CompactSteps {
+    /// Step storage, with unused slots left at their defaults.
     values: [Step; MAX_NUM_STEPS_REPORTED],
+    /// Number of decoded steps.
     len: usize,
 }
 
@@ -1742,8 +1762,8 @@ mod compact_wire_tests {
             }
             let decoded: SubeventResultEvent = postcard::from_bytes(&bytes).unwrap();
             assert_eq!(decoded.step_count, count);
-            for index in 0..count {
-                assert_eq!(decoded.steps[index].channel, index as u8);
+            for (index, step) in decoded.steps[..count].iter().enumerate() {
+                assert_eq!(step.channel, index as u8);
             }
             if count < MAX_NUM_STEPS_REPORTED {
                 assert_eq!(decoded.steps[count].channel, 0);
