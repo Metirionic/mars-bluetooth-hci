@@ -1,7 +1,7 @@
 # Wire-format specification
 
 For developers implementing or maintaining a decoder. This is the byte-level
-contract for CS event and log serialization, including **version 2** of the CS
+contract for CS event and log serialization, including **version 3** of the CS
 payload. The same raw bytes are used by the persisted-frame codec.
 
 See [architecture.md](architecture.md) for library boundaries and
@@ -26,8 +26,8 @@ use identical bytes. There is no magic byte or outer length prefix.
 
 ### CS payload version
 
-The CS version is **2** (`SUBEVENT_RESULT_FORMAT_VERSION`), so a raw CS frame
-starts with `00 02`. Log messages have no version field.
+The CS version is **3** (`SUBEVENT_RESULT_FORMAT_VERSION`), so a raw CS frame
+starts with `00 03`. Log messages have no version field.
 
 ## Encoding: postcard + COBS
 
@@ -71,15 +71,14 @@ For each UART frame:
 1. Collect bytes through a `0x00` delimiter. Ignore empty frames and retain a
    partial frame until its delimiter arrives.
 2. COBS-decode the body and read the envelope tag.
-3. For a CS event, require version 2, then decode the fields below. Reject more
+3. For a CS event, require version 3, then decode the fields below. Reject more
    than 160 steps or a sequence length that differs from `step_count`.
-4. Require `antenna_path_count <= 4` and agreement between each step's `mode`
-   and `info.kind`. For a log message, decode the length-prefixed UTF-8 string.
+4. Require `antenna_path_count <= 4` and no decoded payload for reserved step modes. For a log message, decode the length-prefixed UTF-8 string.
 
 `postcard::from_bytes_cobs` combines COBS decoding and deserialization in Rust.
 For CS events, call `SubeventResultEvent::validate_invariants()` afterwards:
-serde checks version and step counts but does not check antenna count or
-mode/kind agreement. The persisted-frame codec performs these checks and also
+serde checks version, step counts, and reserved-mode payloads but does not
+check antenna count. The persisted-frame codec performs these checks and also
 rejects trailing bytes and non-CS envelopes.
 
 ## Payloads
@@ -90,7 +89,7 @@ The CS payload has 16 fields in wire order, independent of the C struct layout:
 
 | # | Field | Type | Encoding note |
 |---|---|---|---|
-| 1 | `version` | `u16` | varint; must be 2 |
+| 1 | `version` | `u16` | varint; must be 3 |
 | 2 | `origin` | `Origin` (enum) | varint tag: Unknown = 0, Initiator = 1, Reflector = 2 |
 | 3 | `local_mac` | `u64` | varint; **not** a fixed 6-byte MAC |
 | 4 | `peer_mac` | `u64` | varint; **not** a fixed 6-byte MAC |
@@ -114,25 +113,12 @@ both zero counts and the initial-metadata fields.
 
 Each `Step` is encoded in this order:
 
-1. `mode`: one raw `u8` (0, 1, 2, 3, or `0xFF` for an invalid step).
+1. `mode`: a declaration-order enum tag (0–3 for Modes 0–3, 4 for Reserved).
 2. `channel`: one `u8`.
-3. `info`: the `ModeRoleSpecificInfoKind` varint tag followed by only its selected
-   payload, as listed below. No tuple length, payload length, or end marker is emitted.
-
-| Kind tag | `ModeRoleSpecificInfoKind` | Required `mode` | Payload after the kind tag |
-|---|---|---|---|
-| `0x00` | `Mode0Reflector` | 0 | `mode0: Mode0Data` |
-| `0x01` | `Mode1Initiator` | 1 | `mode1: Mode1Data` |
-| `0x02` | `Mode1InitiatorPbrRtt` | 1 | `mode1: Mode1Data` |
-| `0x03` | `Mode1Reflector` | 1 | `mode1: Mode1Data` |
-| `0x04` | `Mode1ReflectorPbrRtt` | 1 | `mode1: Mode1Data` |
-| `0x05` | `Mode2` | 2 | `mode2: Mode2` |
-| `0x06` | `Mode3Initiator` | 3 | `mode1`, then `mode2` |
-| `0x07` | `Mode3InitiatorPbrRtt` | 3 | `mode1`, then `mode2` |
-| `0x08` | `Mode3Reflector` | 3 | `mode1`, then `mode2` |
-| `0x09` | `Mode3ReflectorPbrRtt` | 3 | `mode1`, then `mode2` |
-| `0x0A` | `Mode0Initiator` | 0 | `mode0: Mode0Data` |
-| `0x0B` | `Invalid` | `0xFF` | none (unit encodes to zero bytes) |
+3. `has_data`: one boolean byte. If false, no payload follows.
+4. If `has_data` is true, Mode 0 carries `mode0`, Mode 1 carries `mode1`,
+   Mode 2 carries `mode2`, and Mode 3 carries `mode1` followed by `mode2`.
+   Reserved modes cannot carry a payload.
 
 Unselected `mode0`, `mode1`, and `mode2` fields are omitted and restored to defaults
 on Rust deserialization. Within a selected payload, fields retain their derived
@@ -144,7 +130,7 @@ serde encoding:
 - `Mode1Data`: `packet`, `timing`, `packet_phase_correction_terms`,
   `has_packet_phase_correction_terms`. The phase-correction fields are serialized
   even when their validity flag is false.
-- `Mode2`: `antenna_permutation_index`, all five `phase_correction_terms`, all five
+- `Mode2Data`: `antenna_permutation_index`, all five `phase_correction_terms`, all five
   `quality_indicators`, then all five `extension_slots`. Each array has no length prefix and is not
   shortened to `antenna_path_count + 1`.
 - `initial_meta` is serialized even when `has_initial_meta` is false; `config_id`
@@ -180,29 +166,26 @@ Explicit `#[repr(u8)]` values in the C header do not determine wire tags. For ex
 | `Aborted` | `0x0F` | `0x02` |
 | `Reserved` | `0xFF` | `0x03` |
 
-`Step.mode` and `info.kind` also use different values: for Mode 2, they are
-`0x02` and `0x05`. Use the payload table above to select the fields after the kind tag.
+`StepMode::Reserved` encodes as 4 despite its `0xFF` C/HCI discriminant.
+Unknown serialized tags are rejected.
 
 ## Versioning and compatibility
 
-V2 is incompatible with v1, which had no payload version and serialized all
-160 steps and all mode fields. Firmware and decoders must use compatible
-releases. The C ABI, envelope tags, log encoding, and COBS framing are unchanged.
-Do not detect legacy frames from payload bytes: v1 began with the origin tag,
-whose Reflector value is also `0x02`.
+Version 3 replaces the payload-kind tag with `Step.has_data` and mode-selected
+payloads. The C API/layout changes accordingly. Firmware, generated headers,
+and decoders must use compatible releases. Envelope tags, log encoding, and
+COBS framing are unchanged.
 
 Persisted frames require an out-of-band `FrameDescriptor` with format name
-`mars-hci-cs-subevent` and version **2**, stored alongside the raw non-COBS bytes.
+`mars-hci-cs-subevent` and version **3**, stored alongside the raw non-COBS bytes.
 Decode checks the descriptor before the in-band CS version. The current codec
-rejects v1 descriptors and provides no converter; existing v1 recordings require
-the old implementation to decode before re-encoding with v2.
+rejects older versions and provides no converter; existing recordings require
+the old implementation to decode before re-encoding with version 3.
 
-[Current fixtures](../mars-bluetooth-hci/tests/fixtures/persisted-frames/v2/) pin
+[Current fixtures](../mars-bluetooth-hci/tests/fixtures/persisted-frames/v3/) pin
 encoder bytes for Modes 0–3 and a config-complete frame.
-[Legacy v1 fixtures](../mars-bluetooth-hci/tests/fixtures/legacy-persisted-frames/v1/)
-verify rejection through a v1 descriptor. Future incompatible changes require a
-new version and an explicit migration transition
-([ADR-0003](adr/0003-versioned-persisted-frame-codec.md)).
+Future incompatible changes require a new version and an explicit migration
+transition ([ADR-0003](adr/0003-versioned-persisted-frame-codec.md)).
 
 The separate timestamped recording container `mars-common::serde::BinaryData`
 has its own `BINARY_FORMAT_VERSION`, currently 2. Its checked `deserialize`

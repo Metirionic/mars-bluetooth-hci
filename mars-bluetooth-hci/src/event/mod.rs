@@ -47,15 +47,11 @@ pub enum ParseError {
     /// declares.
     #[error("message too short: `{0}` bytes")]
     TooShort(usize),
-    /// A step's payload kind does not carry the data its mode calls for.
-    #[error("step `{index}` has mode `{mode}` but payload kind `{kind:?}`")]
-    StepKindModeMismatch {
-        /// The zero-based index of the offending step slot.
+    /// A reserved step mode claims to contain a decoded payload.
+    #[error("step `{index}` has a payload for a reserved mode")]
+    ReservedStepPayload {
+        /// Zero-based index of the offending step.
         index: usize,
-        /// The step's raw mode byte.
-        mode: u8,
-        /// The step's payload kind.
-        kind: crate::event::hci_le_cs::subevent_result::ModeRoleSpecificInfoKind,
     },
 }
 

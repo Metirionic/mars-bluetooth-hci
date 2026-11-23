@@ -89,20 +89,25 @@ handler calls this callback and loops if it returns.
 ## The FFI call pattern
 
 1. Construct `SubeventResultEvent_t` and fill its identity, status, count, and step
-   fields. Each step's `info.kind` must agree with its `mode`.
+   fields. Set each step's `mode` and `has_data`, and populate the selected
+   fields in `data` when a payload is present.
 2. Call `serialize_subevent_result_event(&event, true)` for a UART frame.
 3. Copy or transmit the returned `p_data[0..size]` bytes.
 4. Call `drop_bin` exactly once after the bytes are no longer needed.
 
 Before serialization, ensure `step_count <= 160`, `antenna_path_count <= 4`, and
-every reported step has a matching `mode` and `info.kind` with its selected
-payload populated. Set validity flags such as `has_config_id`, `has_initial_meta`,
-and `has_packet_phase_correction_terms` when their fields contain valid data.
+every reported step with `has_data = true` has its mode-selected payload populated:
+Mode 0 uses `data.mode0`, Mode 1 uses `data.mode1`, Mode 2 uses `data.mode2`, and
+Mode 3 uses both `data.mode1` and `data.mode2`. Set `has_data = false` for a step
+without a payload; its mode and channel are retained, but no payload is serialized.
+Reserved modes must have `has_data = false`. Set validity flags such as
+`has_config_id`, `has_initial_meta`, and `has_packet_phase_correction_terms` when
+their fields contain valid data.
 Zero-initialization alone does not produce a complete measurement. The FFI
 serializer does not validate all these invariants or return validation errors.
 
 Use a decoder compatible with the library release: the current CS wire payload
-is v2 and is incompatible with v1. See
+is v3 and is incompatible with v1 and v2. See
 [wire compatibility](wire-format.md#versioning-and-compatibility).
 
 ### SerializedData ownership
@@ -163,11 +168,11 @@ int build_and_send_local_event(uint64_t local_mac, uint64_t peer_mac,
     event.step_count = 1;
 
     Step_t *step = &event.steps.idx[0];
-    step->mode = 2;
+    step->mode = STEP_MODE_MODE2;
     step->channel = 19;
-    step->info.kind = MODE_ROLE_SPECIFIC_INFO_KIND_MODE2;
-    step->info.mode2.phase_correction_terms.idx[0].i = 1.0f;
-    step->info.mode2.quality_indicators.idx[0] = TONE_QUALITY_INDICATOR_HIGH;
+    step->has_data = true;
+    step->data.mode2.phase_correction_terms.idx[0].i = 1.0f;
+    step->data.mode2.quality_indicators.idx[0] = TONE_QUALITY_INDICATOR_HIGH;
     return send_subevent(&event);
 }
 ```

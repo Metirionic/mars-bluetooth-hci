@@ -88,11 +88,11 @@ enum Origin {
      */
     ORIGIN_UNKNOWN,
     /** \brief
-     *  Data from an initiator. Carries MAC address identifier.
+     *  Data from an initiator.
      */
     ORIGIN_INITIATOR,
     /** \brief
-     *  Data from a reflector. Carries MAC address identifier.
+     *  Data from a reflector.
      */
     ORIGIN_REFLECTOR,
 }
@@ -208,75 +208,41 @@ enum SubeventAbortReason {
 SubeventAbortReason_t;
 
 /** \brief
- *  Discriminant for [`ModeRoleSpecificInfo`].
+ *  Channel Sounding step mode. Other transported values are reserved for future use.
  *
- *  The parser populates Mode 0, Mode 1, Mode 2, Mode 3, and `Invalid` (the
- *  `0xFF` sentinel) variants.
+ *  Unknown HCI mode bytes map to `Reserved`; their original byte is not retained.
+ *  Serde uses declaration-order variant indices, independently of the HCI byte values.
  */
 /** \remark Has the same ABI as `uint8_t` **/
 #ifdef DOXYGEN
 typedef
 #endif
-enum ModeRoleSpecificInfoKind {
+enum StepMode {
     /** \brief
-     *  Mode 0, reflector role.
+     *  Mode 0, frequency offset calibration step.
      */
-    MODE_ROLE_SPECIFIC_INFO_KIND_MODE0_REFLECTOR,
+    STEP_MODE_MODE0 = 0,
     /** \brief
-     *  Mode 1, initiator role.
+     *  Mode 1, round-trip timing step.
      */
-    MODE_ROLE_SPECIFIC_INFO_KIND_MODE1_INITIATOR,
+    STEP_MODE_MODE1 = 1,
     /** \brief
-     *  Mode 1, initiator role, with PBR and RTT measurements.
+     *  Mode 2, phase-based ranging step.
      */
-    MODE_ROLE_SPECIFIC_INFO_KIND_MODE1_INITIATOR_PBR_RTT,
+    STEP_MODE_MODE2 = 2,
     /** \brief
-     *  Mode 1, reflector role.
+     *  Mode 3, combined round-trip timing and phase-based ranging step.
      */
-    MODE_ROLE_SPECIFIC_INFO_KIND_MODE1_REFLECTOR,
+    STEP_MODE_MODE3 = 3,
     /** \brief
-     *  Mode 1, reflector role, with PBR and RTT measurements.
+     *  Reserved mode.
      */
-    MODE_ROLE_SPECIFIC_INFO_KIND_MODE1_REFLECTOR_PBR_RTT,
-    /** \brief
-     *  Mode 2 (see [`Mode2`]).
-     */
-    MODE_ROLE_SPECIFIC_INFO_KIND_MODE2,
-    /** \brief
-     *  Mode 3, initiator role.
-     */
-    MODE_ROLE_SPECIFIC_INFO_KIND_MODE3_INITIATOR,
-    /** \brief
-     *  Mode 3, initiator role, with PBR and RTT measurements.
-     */
-    MODE_ROLE_SPECIFIC_INFO_KIND_MODE3_INITIATOR_PBR_RTT,
-    /** \brief
-     *  Mode 3, reflector role.
-     */
-    MODE_ROLE_SPECIFIC_INFO_KIND_MODE3_REFLECTOR,
-    /** \brief
-     *  Mode 3, reflector role, with PBR and RTT measurements.
-     */
-    MODE_ROLE_SPECIFIC_INFO_KIND_MODE3_REFLECTOR_PBR_RTT,
-    /** \brief
-     *  Mode 0, initiator role.
-     *
-     *  Appended at the end to preserve the existing wire values of the
-     *  variants above.
-     */
-    MODE_ROLE_SPECIFIC_INFO_KIND_MODE0_INITIATOR,
-    /** \brief
-     *  A step slot reported without valid data (Step_Mode `0xFF`).
-     *
-     *  Appended at the end to preserve the existing wire values of the
-     *  variants above.
-     */
-    MODE_ROLE_SPECIFIC_INFO_KIND_INVALID,
+    STEP_MODE_RESERVED = 255,
 }
 #ifndef DOXYGEN
 ; typedef uint8_t
 #endif
-ModeRoleSpecificInfoKind_t;
+StepMode_t;
 
 /** \brief
  *  Decoded contents of the packet quality byte.
@@ -533,7 +499,7 @@ typedef struct {
 /** \brief
  *  Content of a Mode2 that is captured in a step.
  */
-typedef struct Mode2 {
+typedef struct Mode2Data {
     /** \brief
      *  The selected antenna permutation index.
      */
@@ -553,44 +519,27 @@ typedef struct Mode2 {
      *  The selected extension slots for the antenna paths.
      */
     ExtensionSlot_5_array_t extension_slots;
-} Mode2_t;
+} Mode2Data_t;
 
 /** \brief
- *  Mode- and role-specific information.
- *
- *  The payload fields are selected by `kind`.
+ *  Decoded payload sections, interpreted using the enclosing step's mode and event role.
  */
-typedef struct ModeRoleSpecificInfo {
+typedef struct StepData {
     /** \brief
-     *  The kind of mode- and role-specific information.
-     */
-    ModeRoleSpecificInfoKind_t kind;
-
-    /** \brief
-     *  Mode0 data. Valid when `kind`
-     *  is [`ModeRoleSpecificInfoKind::Mode0Reflector`]
-     *  or [`ModeRoleSpecificInfoKind::Mode0Initiator`].
+     *  Calibration fields, present for Mode 0.
      */
     Mode0Data_t mode0;
 
     /** \brief
-     *  Mode1 data. Valid when `kind`
-     *  is [`ModeRoleSpecificInfoKind::Mode1Initiator`]
-     *  or [`ModeRoleSpecificInfoKind::Mode1InitiatorPbrRtt`]
-     *  or [`ModeRoleSpecificInfoKind::Mode1Reflector`]
-     *  or [`ModeRoleSpecificInfoKind::Mode1ReflectorPbrRtt`],
-     *  and also for Mode 3 variants (Mode 3 = Mode 1 + Mode 2 in the spec).
+     *  Packet timing fields, present for Mode 1 and Mode 3.
      */
     Mode1Data_t mode1;
 
     /** \brief
-     *  Mode2 data. Valid when `kind`
-     *  is [`ModeRoleSpecificInfoKind::Mode2`],
-     *  and also for Mode 3 variants (the tone fields are populated alongside
-     *  Mode 1 packet fields in `mode1`).
+     *  Tone fields, present for Mode 2 and Mode 3.
      */
-    Mode2_t mode2;
-} ModeRoleSpecificInfo_t;
+    Mode2Data_t mode2;
+} StepData_t;
 
 /** \brief
  *  Data that characterizes a step.
@@ -599,7 +548,7 @@ typedef struct Step {
     /** \brief
      *  The type of mode.
      */
-    uint8_t mode;
+    StepMode_t mode;
 
     /** \brief
      *  The selected frequency channel.
@@ -607,9 +556,14 @@ typedef struct Step {
     uint8_t channel;
 
     /** \brief
-     *  Information that is specific to the mode and role of a node.
+     *  Whether this step has a decoded payload; false for zero-length step data.
      */
-    ModeRoleSpecificInfo_t info;
+    bool has_data;
+
+    /** \brief
+     *  Measurements and metadata selected by the step mode.
+     */
+    StepData_t data;
 } Step_t;
 
 typedef struct {
@@ -682,7 +636,7 @@ typedef struct SubeventResultEvent {
      *  [`SubeventResultEvent::try_from_with_origin`] — because Mode 1 and
      *  Mode 3 steps reject an unknown origin (see
      *  [`ParseError::UnknownOriginForMode`]). It is not settable afterwards
-     *  for frames carrying Mode 1 or Mode 3 steps: their payload kinds and
+     *  for frames carrying Mode 1 or Mode 3 steps: their
      *  role timings were already selected from the origin during the parse.
      */
     Origin_t origin;
