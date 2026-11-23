@@ -80,10 +80,9 @@ pub enum FrameCodecError {
     /// The frame decoded but left unconsumed trailing bytes.
     #[error("persisted CS subevent frame has trailing bytes")]
     TrailingBytes,
-    /// The frame's event exceeds the fixed step array or the antenna-path
-    /// table, or a reported step's payload kind does not carry its mode's
-    /// data; see [`SubeventResultEvent::validate_invariants`].
-    #[error("persisted CS subevent frame decodes to an event that violates the subevent-result invariants")]
+    /// The event violates the structural constraints checked by
+    /// [`SubeventResultEvent::validate_invariants`].
+    #[error("persisted CS subevent frame contains an invalid event")]
     InvalidEvent(#[source] ParseError),
     /// The decoded FFI transport value is not a CS subevent-result event.
     #[error("persisted CS subevent frame contains a different FFI value kind")]
@@ -109,7 +108,7 @@ pub fn validate_descriptor(descriptor: FrameDescriptor<'_>) -> Result<(), FrameC
 /// Encodes one CS subevent-result event using the current persisted-frame
 /// representation.
 ///
-/// The event's counts and step payload kinds are validated first (see
+/// The event's counts and payload presence are validated first (see
 /// [`SubeventResultEvent::validate_invariants`]), so every frame this codec
 /// writes replays through [`decode`].
 pub fn encode(event: &SubeventResultEvent) -> Result<Vec<u8>, FrameCodecError> {
@@ -122,7 +121,7 @@ pub fn encode(event: &SubeventResultEvent) -> Result<Vec<u8>, FrameCodecError> {
 pub fn decode(descriptor: FrameDescriptor<'_>, bytes: &[u8]) -> Result<SubeventResultEvent, FrameCodecError> {
     validate_descriptor(descriptor)?;
     match descriptor.version() {
-        SUBEVENT_RESULT_FORMAT_VERSION => decode_v2(bytes),
+        SUBEVENT_RESULT_FORMAT_VERSION => decode_v3(bytes),
         _ => unreachable!("descriptor validation permits only the current frame version"),
     }
 }
@@ -134,7 +133,7 @@ pub fn decode(descriptor: FrameDescriptor<'_>, bytes: &[u8]) -> Result<SubeventR
 /// over-written, or concatenated storage record, which is rejected instead of
 /// silently decoding its first frame. The decoded event must satisfy the
 /// invariants of [`SubeventResultEvent::validate_invariants`].
-fn decode_v2(bytes: &[u8]) -> Result<SubeventResultEvent, FrameCodecError> {
+fn decode_v3(bytes: &[u8]) -> Result<SubeventResultEvent, FrameCodecError> {
     let (frame, trailing) = take_from_bytes(bytes).map_err(FrameCodecError::Decode)?;
     if !trailing.is_empty() {
         return Err(FrameCodecError::TrailingBytes);
@@ -153,7 +152,7 @@ mod tests {
     use super::*;
     use crate::event::ParseError;
     use crate::event::hci_le_cs::constants::le_subevent_code;
-    use crate::event::hci_le_cs::subevent_result::{ModeRoleSpecificInfo, ModeRoleSpecificInfoKind, Origin, Step};
+    use crate::event::hci_le_cs::subevent_result::Origin;
 
     fn representative_event() -> SubeventResultEvent {
         let message = [
@@ -181,7 +180,7 @@ mod tests {
     }
 
     #[test]
-    fn v2_encoding_matches_the_existing_hci_ffi_serializer() {
+    fn current_encoding_matches_the_existing_hci_ffi_serializer() {
         let event = representative_event();
 
         let existing: Vec<u8> = crate::libc::serialize_subevent_result_event(&event, false).into();
@@ -191,7 +190,7 @@ mod tests {
     }
 
     #[test]
-    fn v2_decoding_round_trips_the_current_hci_encoding() {
+    fn current_decoding_round_trips_the_current_hci_encoding() {
         let event = representative_event();
         let bytes = encode(&event).expect("persisted serializer works");
 
@@ -212,13 +211,12 @@ mod tests {
             ),
             Err(FrameCodecError::UnsupportedFormat)
         ));
-        assert!(matches!(
-            decode(
-                FrameDescriptor::new(CS_SUBEVENT_FRAME_FORMAT, SUBEVENT_RESULT_FORMAT_VERSION + 1),
-                &bytes
-            ),
-            Err(FrameCodecError::UnsupportedVersion { .. })
-        ));
+        for version in [1, 2, SUBEVENT_RESULT_FORMAT_VERSION + 1] {
+            assert!(matches!(
+                decode(FrameDescriptor::new(CS_SUBEVENT_FRAME_FORMAT, version), &[]),
+                Err(FrameCodecError::UnsupportedVersion { version: rejected }) if rejected == version
+            ));
+        }
     }
 
     #[test]
@@ -242,7 +240,7 @@ mod tests {
     }
 
     #[test]
-    fn v2_decoding_rejects_frames_with_trailing_bytes() {
+    fn current_decoding_rejects_frames_with_trailing_bytes() {
         // Appended garbage (padding, over-write, or a second record) must not
         // silently decode as one valid event.
         let event = representative_event();
@@ -256,7 +254,7 @@ mod tests {
     }
 
     #[test]
-    fn v2_decoding_rejects_concatenated_frames() {
+    fn current_decoding_rejects_concatenated_frames() {
         let event = representative_event();
         let mut bytes = encode(&event).expect("persisted serializer works");
         bytes.extend_from_slice(&encode(&event).expect("persisted serializer works"));
@@ -268,7 +266,7 @@ mod tests {
     }
 
     #[test]
-    fn v2_decoding_rejects_events_with_broken_invariants() {
+    fn current_decoding_rejects_events_with_broken_invariants() {
         let event = representative_event();
 
         // Step count past the fixed step array: splice the step-count varint
@@ -300,7 +298,7 @@ mod tests {
     }
 
     #[test]
-    fn v2_decoding_rejects_truncated_frames() {
+    fn current_decoding_rejects_truncated_frames() {
         let event = representative_event();
         let bytes = encode(&event).expect("persisted serializer works");
 
@@ -319,26 +317,14 @@ mod tests {
     }
 
     #[test]
-    fn encoding_rejects_fabricated_pre_migration_steps() {
-        // A pre-PR build parsed a 0xFF slot by collapsing it, leaving a
-        // fabricated default step (mode 0x00, kind Mode2) inside the step
-        // window; replaying such a record must fail loudly instead of
-        // returning fabricated measurement data.
+    fn encoding_rejects_payload_for_a_reserved_mode() {
         let mut event = representative_event();
-        event.steps[1] = Step {
-            mode: 0x00,
-            channel: 0x05,
-            info: ModeRoleSpecificInfo {
-                kind: ModeRoleSpecificInfoKind::Mode2,
-                ..Default::default()
-            },
-        };
-        event.step_count = 2;
-
+        event.steps[0].mode = super::super::subevent_result::StepMode::Reserved;
         assert!(matches!(
             encode(&event),
-            Err(FrameCodecError::InvalidEvent(error))
-                if matches!(error, ParseError::StepKindModeMismatch { index: 1, mode: 0x00, .. })
+            Err(FrameCodecError::InvalidEvent(ParseError::ReservedStepPayload {
+                index: 0
+            }))
         ));
     }
 }

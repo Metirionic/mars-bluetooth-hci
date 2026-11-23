@@ -17,7 +17,7 @@ use crate::event::{
 };
 
 /// Current version of the serialized CS subevent-result payload.
-pub const SUBEVENT_RESULT_FORMAT_VERSION: u16 = 2;
+pub const SUBEVENT_RESULT_FORMAT_VERSION: u16 = 3;
 
 /// The phase correction term (PCT), composed of I and Q components.
 #[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
@@ -232,7 +232,7 @@ pub struct Mode1Data {
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 #[derive_ReprC]
 #[repr(C)]
-pub struct Mode2 {
+pub struct Mode2Data {
     /// The selected antenna permutation index.
     pub antenna_permutation_index: u8,
     /// The phase correction terms for the antenna paths.
@@ -243,7 +243,7 @@ pub struct Mode2 {
     pub extension_slots: [ExtensionSlot; MAX_ANTENNA_PATH_COUNT + 1],
 }
 
-impl Mode2 {
+impl Mode2Data {
     /// Look up the physical antenna index for a given logical path position.
     ///
     /// Uses the spec-defined antenna permutation tables (Bluetooth CS Vol 6, Part H,
@@ -260,155 +260,159 @@ impl Mode2 {
     }
 }
 
-/// Discriminant for [`ModeRoleSpecificInfo`].
+/// Decoded payload sections, interpreted using the enclosing step's mode and event role.
+#[derive(Debug, Default, Clone, Copy)]
+#[derive_ReprC]
+#[repr(C)]
+pub struct StepData {
+    /// Calibration fields, present for Mode 0.
+    pub mode0: Mode0Data,
+    /// Packet timing fields, present for Mode 1 and Mode 3.
+    pub mode1: Mode1Data,
+    /// Tone fields, present for Mode 2 and Mode 3.
+    pub mode2: Mode2Data,
+}
+
+/// Channel Sounding step mode. Other transported values are reserved for future use.
 ///
-/// The parser populates Mode 0, Mode 1, Mode 2, Mode 3, and `Invalid` (the
-/// `0xFF` sentinel) variants.
+/// Unknown HCI mode bytes map to `Reserved`; their original byte is not retained.
+/// Serde uses declaration-order variant indices, independently of the HCI byte values.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[derive_ReprC]
 #[repr(u8)]
-pub enum ModeRoleSpecificInfoKind {
-    /// Mode 0, reflector role.
-    Mode0Reflector,
-    /// Mode 1, initiator role.
-    Mode1Initiator,
-    /// Mode 1, initiator role, with PBR and RTT measurements.
-    Mode1InitiatorPbrRtt,
-    /// Mode 1, reflector role.
-    Mode1Reflector,
-    /// Mode 1, reflector role, with PBR and RTT measurements.
-    Mode1ReflectorPbrRtt,
-    /// Mode 2 (see [`Mode2`]).
+pub enum StepMode {
+    /// Mode 0, frequency offset calibration step.
     #[default]
-    Mode2,
-    /// Mode 3, initiator role.
-    Mode3Initiator,
-    /// Mode 3, initiator role, with PBR and RTT measurements.
-    Mode3InitiatorPbrRtt,
-    /// Mode 3, reflector role.
-    Mode3Reflector,
-    /// Mode 3, reflector role, with PBR and RTT measurements.
-    Mode3ReflectorPbrRtt,
-    /// Mode 0, initiator role.
-    ///
-    /// Appended at the end to preserve the existing wire values of the
-    /// variants above.
-    Mode0Initiator,
-    /// A step slot reported without valid data (Step_Mode `0xFF`).
-    ///
-    /// Appended at the end to preserve the existing wire values of the
-    /// variants above.
-    Invalid,
+    Mode0 = 0,
+    /// Mode 1, round-trip timing step.
+    Mode1 = 1,
+    /// Mode 2, phase-based ranging step.
+    Mode2 = 2,
+    /// Mode 3, combined round-trip timing and phase-based ranging step.
+    Mode3 = 3,
+    /// Reserved mode.
+    Reserved = 0xFF,
 }
 
-impl ModeRoleSpecificInfoKind {
-    /// Returns the CS step mode whose payload this kind carries.
-    pub fn mode(self) -> u8 {
-        match self {
-            Self::Mode0Reflector | Self::Mode0Initiator => step_mode::MODE_0,
-            Self::Mode1Initiator | Self::Mode1InitiatorPbrRtt | Self::Mode1Reflector | Self::Mode1ReflectorPbrRtt => {
-                step_mode::MODE_1
-            }
-            Self::Mode2 => step_mode::MODE_2,
-            Self::Mode3Initiator | Self::Mode3InitiatorPbrRtt | Self::Mode3Reflector | Self::Mode3ReflectorPbrRtt => {
-                step_mode::MODE_3
-            }
-            Self::Invalid => step_mode::MODE_INVALID,
+impl From<u8> for StepMode {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => Self::Mode0,
+            1 => Self::Mode1,
+            2 => Self::Mode2,
+            3 => Self::Mode3,
+            _ => Self::Reserved,
         }
     }
 }
 
-/// Mode- and role-specific information.
-///
-/// The payload fields are selected by `kind`.
+impl From<StepMode> for u8 {
+    fn from(value: StepMode) -> Self {
+        value as Self
+    }
+}
+
+impl core::fmt::Display for StepMode {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", u8::from(*self))
+    }
+}
+
+/// Data that characterizes a step.
 #[derive(Debug, Default, Clone, Copy)]
 #[derive_ReprC]
 #[repr(C)]
-pub struct ModeRoleSpecificInfo {
-    /// The kind of mode- and role-specific information.
-    pub kind: ModeRoleSpecificInfoKind,
-    /// Mode0 data. Valid when `kind`
-    /// is [`ModeRoleSpecificInfoKind::Mode0Reflector`]
-    /// or [`ModeRoleSpecificInfoKind::Mode0Initiator`].
-    pub mode0: Mode0Data,
-    /// Mode1 data. Valid when `kind`
-    /// is [`ModeRoleSpecificInfoKind::Mode1Initiator`]
-    /// or [`ModeRoleSpecificInfoKind::Mode1InitiatorPbrRtt`]
-    /// or [`ModeRoleSpecificInfoKind::Mode1Reflector`]
-    /// or [`ModeRoleSpecificInfoKind::Mode1ReflectorPbrRtt`],
-    /// and also for Mode 3 variants (Mode 3 = Mode 1 + Mode 2 in the spec).
-    pub mode1: Mode1Data,
-    /// Mode2 data. Valid when `kind`
-    ///  is [`ModeRoleSpecificInfoKind::Mode2`],
-    /// and also for Mode 3 variants (the tone fields are populated alongside
-    /// Mode 1 packet fields in `mode1`).
-    pub mode2: Mode2,
+pub struct Step {
+    /// The type of mode.
+    pub mode: StepMode,
+    /// The selected frequency channel.
+    pub channel: u8,
+    /// Whether this step has a decoded payload; false for zero-length step data.
+    pub has_data: bool,
+    /// Measurements and metadata selected by the step mode.
+    pub data: StepData,
 }
 
-// The C layout stays fixed; only the selected payload crosses the wire.
-impl Serialize for ModeRoleSpecificInfo {
+impl Step {
+    /// Whether this step contains a decoded payload.
+    ///
+    /// A zero-length HCI step retains its mode and channel but has no payload.
+    pub fn has_data(&self) -> bool {
+        self.has_data
+    }
+
+    /// Decoded tone fields for a Mode 2 or Mode 3 step with payload data.
+    pub fn tone_data(&self) -> Option<&Mode2Data> {
+        if self.has_data && matches!(self.mode, StepMode::Mode2 | StepMode::Mode3) {
+            Some(&self.data.mode2)
+        } else {
+            None
+        }
+    }
+}
+
+// A mode selects payload sections; presence is independent of that mode.
+impl Serialize for Step {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeTuple;
-        let mut tuple = serializer.serialize_tuple(2)?;
-        tuple.serialize_element(&self.kind)?;
-        match self.kind.mode() {
-            step_mode::MODE_0 => tuple.serialize_element(&self.mode0)?,
-            step_mode::MODE_1 => tuple.serialize_element(&self.mode1)?,
-            step_mode::MODE_2 => tuple.serialize_element(&self.mode2)?,
-            step_mode::MODE_3 => tuple.serialize_element(&(self.mode1, self.mode2))?,
-            _ => tuple.serialize_element(&())?,
+        let mut tuple = serializer.serialize_tuple(4)?;
+        tuple.serialize_element(&self.mode)?;
+        tuple.serialize_element(&self.channel)?;
+        tuple.serialize_element(&self.has_data)?;
+        if !self.has_data {
+            tuple.serialize_element(&())?;
+        } else {
+            match self.mode {
+                StepMode::Mode0 => tuple.serialize_element(&self.data.mode0)?,
+                StepMode::Mode1 => tuple.serialize_element(&self.data.mode1)?,
+                StepMode::Mode2 => tuple.serialize_element(&self.data.mode2)?,
+                StepMode::Mode3 => tuple.serialize_element(&(self.data.mode1, self.data.mode2))?,
+                StepMode::Reserved => return Err(serde::ser::Error::custom("reserved mode has no decoded payload")),
+            }
         }
         tuple.end()
     }
 }
 
-impl<'de> Deserialize<'de> for ModeRoleSpecificInfo {
+impl<'de> Deserialize<'de> for Step {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        struct PayloadVisitor;
-        impl<'de> serde::de::Visitor<'de> for PayloadVisitor {
-            type Value = ModeRoleSpecificInfo;
+        struct StepVisitor;
+        impl<'de> serde::de::Visitor<'de> for StepVisitor {
+            type Value = Step;
             fn expecting(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-                f.write_str("a CS payload kind and its selected data")
+                f.write_str("a step mode, channel, presence flag and selected payload")
             }
-            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Step, A::Error> {
                 fn required<'de, T: Deserialize<'de>, A: serde::de::SeqAccess<'de>>(
                     seq: &mut A,
                 ) -> Result<T, A::Error> {
                     seq.next_element()?
-                        .ok_or_else(|| serde::de::Error::custom("missing CS payload"))
+                        .ok_or_else(|| serde::de::Error::custom("missing step field"))
                 }
-                let kind: ModeRoleSpecificInfoKind = required(&mut seq)?;
-                let mut info = ModeRoleSpecificInfo {
-                    kind,
-                    ..Default::default()
+                let mut step = Step {
+                    mode: required(&mut seq)?,
+                    channel: required(&mut seq)?,
+                    has_data: required(&mut seq)?,
+                    data: Default::default(),
                 };
-                match kind.mode() {
-                    step_mode::MODE_0 => info.mode0 = required(&mut seq)?,
-                    step_mode::MODE_1 => info.mode1 = required(&mut seq)?,
-                    step_mode::MODE_2 => info.mode2 = required(&mut seq)?,
-                    step_mode::MODE_3 => (info.mode1, info.mode2) = required(&mut seq)?,
-                    _ => {
-                        let _: () = required(&mut seq)?;
+                if !step.has_data {
+                    let _: () = required(&mut seq)?;
+                } else {
+                    match step.mode {
+                        StepMode::Mode0 => step.data.mode0 = required(&mut seq)?,
+                        StepMode::Mode1 => step.data.mode1 = required(&mut seq)?,
+                        StepMode::Mode2 => step.data.mode2 = required(&mut seq)?,
+                        StepMode::Mode3 => (step.data.mode1, step.data.mode2) = required(&mut seq)?,
+                        StepMode::Reserved => {
+                            return Err(serde::de::Error::custom("reserved mode has no decoded payload"));
+                        }
                     }
                 }
-                Ok(info)
+                Ok(step)
             }
         }
-        deserializer.deserialize_tuple(2, PayloadVisitor)
+        deserializer.deserialize_tuple(4, StepVisitor)
     }
-}
-
-/// Data that characterizes a step.
-#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
-#[derive_ReprC]
-#[repr(C)]
-pub struct Step {
-    /// The type of mode.
-    pub mode: u8,
-    /// The selected frequency channel.
-    pub channel: u8,
-    /// Information that is specific to the mode and role of a node.
-    pub info: ModeRoleSpecificInfo,
 }
 
 /// Metadata that is contained only in the initial HCI_LE_CS_Config_Complete subevent.
@@ -435,9 +439,9 @@ pub struct InitialMeta {
 pub enum Origin {
     /// Origin is unknown.
     Unknown,
-    /// Data from an initiator. Carries MAC address identifier.
+    /// Data from an initiator.
     Initiator,
-    /// Data from a reflector. Carries MAC address identifier.
+    /// Data from a reflector.
     Reflector,
 }
 
@@ -457,7 +461,7 @@ pub struct SubeventResultEvent {
     /// [`SubeventResultEvent::try_from_with_origin`] — because Mode 1 and
     /// Mode 3 steps reject an unknown origin (see
     /// [`ParseError::UnknownOriginForMode`]). It is not settable afterwards
-    /// for frames carrying Mode 1 or Mode 3 steps: their payload kinds and
+    /// for frames carrying Mode 1 or Mode 3 steps: their
     /// role timings were already selected from the origin during the parse.
     pub origin: Origin,
 
@@ -651,16 +655,7 @@ impl SubeventResultEvent {
         Self::parse_internal(message, origin)
     }
 
-    /// Checks the invariants the parser guarantees for every event it
-    /// produces.
-    ///
-    /// The parser rejects messages whose step or antenna-path counts exceed
-    /// the fixed step array and the fixed antenna-path table, and populates
-    /// every reported step with a payload kind that carries its mode's data,
-    /// so no event it returns can break these bounds. Producers of events
-    /// from stored bytes must re-validate so consumers indexing
-    /// `steps[..step_count]` cannot panic on — or mistake — a corrupted or
-    /// foreign-encoder frame.
+    /// Checks step and antenna-path bounds and rejects payloads for reserved modes.
     pub fn validate_invariants(&self) -> Result<(), ParseError> {
         if self.antenna_path_count > MAX_ANTENNA_PATH_COUNT {
             return Err(ParseError::ExceededMaxAntennaPathCount);
@@ -669,12 +664,8 @@ impl SubeventResultEvent {
             return Err(ParseError::ExceededMaxStepCount);
         }
         for (index, step) in self.steps[..self.step_count].iter().enumerate() {
-            if step.info.kind.mode() != step.mode {
-                return Err(ParseError::StepKindModeMismatch {
-                    index,
-                    mode: step.mode,
-                    kind: step.info.kind,
-                });
+            if step.has_data && step.mode == StepMode::Reserved {
+                return Err(ParseError::ReservedStepPayload { index });
             }
         }
         Ok(())
@@ -718,8 +709,8 @@ impl SubeventResultEvent {
     /// Shared by Mode 2 (full step payload) and Mode 3 (trailing tone portion
     /// after the Mode 1 prefix). Does not validate overall step length — the
     /// caller is responsible for slicing `step_data` to the correct tone bytes.
-    fn parse_mode2_tones(step_data: &[u8], antenna_path_count: usize) -> Result<Mode2, ParseError> {
-        let mut tones = Mode2 {
+    fn parse_mode2_tones(step_data: &[u8], antenna_path_count: usize) -> Result<Mode2Data, ParseError> {
+        let mut tones = Mode2Data {
             antenna_permutation_index: step_data[0],
             ..Default::default()
         };
@@ -743,7 +734,7 @@ impl SubeventResultEvent {
     }
 
     /// Parse one grouped Mode 2 step payload.
-    fn parse_mode2_step(step_data: &[u8], antenna_path_count: usize) -> Result<Mode2, ParseError> {
+    fn parse_mode2_step(step_data: &[u8], antenna_path_count: usize) -> Result<Mode2Data, ParseError> {
         let expected_step_data_length = Self::mode2_len(antenna_path_count);
         if step_data.len() != expected_step_data_length {
             return Err(ParseError::InvalidStepDataLength(
@@ -827,7 +818,7 @@ impl SubeventResultEvent {
         step_data: &[u8],
         origin: Origin,
         antenna_path_count: usize,
-    ) -> Result<(Mode1Data, Mode2), ParseError> {
+    ) -> Result<(Mode1Data, Mode2Data), ParseError> {
         let step_data_length = step_data.len();
         let basic_len = Self::mode3_len(antenna_path_count);
         let pbr_rtt_len = Self::mode3_pbr_rtt_len(antenna_path_count);
@@ -870,50 +861,27 @@ impl SubeventResultEvent {
             let step_data = &message[3 + step_byte_offset..3 + step_byte_offset + step_data_length];
 
             match step_mode {
-                // A zero-length step is an aborted step: the controller
+                // A zero-length step may have been aborted: the controller
                 // reports the slot without data regardless of its mode byte
                 // (Core Spec Vol 4, Part E §7.7.65.44/45). Preserve it as a
-                // sentinel instead of rejecting the whole subevent, so the
+                // payload-absence marker while retaining its mode, so the
                 // other measurements are not lost with it.
                 _ if step_data_length == 0 => {
                     self.steps[step_index] = Step {
-                        mode: step_mode::MODE_INVALID,
+                        mode: step_mode.into(),
                         channel: step_channel,
-                        info: ModeRoleSpecificInfo {
-                            kind: ModeRoleSpecificInfoKind::Invalid,
-                            ..Default::default()
-                        },
-                    };
-                    step_index += 1;
-                }
-                step_mode::MODE_INVALID => {
-                    // A 0xFF mode marks a reported step slot as carrying no
-                    // valid data. Preserve the sentinel with its own payload
-                    // kind instead of leaving a fabricated default behind:
-                    // `steps[..step_count]` then holds exactly one entry per
-                    // reported step whose kind never claims mode data, and
-                    // consumers filter on the sentinel mode.
-                    self.steps[step_index] = Step {
-                        mode: step_mode,
-                        channel: step_channel,
-                        info: ModeRoleSpecificInfo {
-                            kind: ModeRoleSpecificInfoKind::Invalid,
-                            ..Default::default()
-                        },
+                        has_data: false,
+                        data: StepData::default(),
                     };
                     step_index += 1;
                 }
                 step_mode::MODE_0 => {
                     let mode0 = Self::parse_mode0_step(step_data)?;
                     self.steps[step_index] = Step {
-                        mode: step_mode,
+                        mode: StepMode::Mode0,
                         channel: step_channel,
-                        info: ModeRoleSpecificInfo {
-                            kind: if step_data.len() == step_data_len::MODE0_INITIATOR {
-                                ModeRoleSpecificInfoKind::Mode0Initiator
-                            } else {
-                                ModeRoleSpecificInfoKind::Mode0Reflector
-                            },
+                        has_data: true,
+                        data: StepData {
                             mode0,
                             ..Default::default()
                         },
@@ -926,10 +894,10 @@ impl SubeventResultEvent {
                     }
                     let mode1 = Self::parse_mode1_step(step_data, self.origin)?;
                     self.steps[step_index] = Step {
-                        mode: step_mode,
+                        mode: StepMode::Mode1,
                         channel: step_channel,
-                        info: ModeRoleSpecificInfo {
-                            kind: self.mode_1_selector(mode1.has_packet_phase_correction_terms),
+                        has_data: true,
+                        data: StepData {
                             mode1,
                             ..Default::default()
                         },
@@ -940,10 +908,10 @@ impl SubeventResultEvent {
                     let mode2 = Self::parse_mode2_step(step_data, self.antenna_path_count)?;
 
                     let step = Step {
-                        mode: step_mode,
+                        mode: StepMode::Mode2,
                         channel: step_channel,
-                        info: ModeRoleSpecificInfo {
-                            kind: ModeRoleSpecificInfoKind::Mode2,
+                        has_data: true,
+                        data: StepData {
                             mode2,
                             ..Default::default()
                         },
@@ -959,10 +927,10 @@ impl SubeventResultEvent {
                     // Mode 3 = Mode 1 + Mode 2; both siblings are populated.
                     let (mode1, mode2) = Self::parse_mode3_step(step_data, self.origin, self.antenna_path_count)?;
                     self.steps[step_index] = Step {
-                        mode: step_mode,
+                        mode: StepMode::Mode3,
                         channel: step_channel,
-                        info: ModeRoleSpecificInfo {
-                            kind: self.mode_3_selector(mode1.has_packet_phase_correction_terms),
+                        has_data: true,
+                        data: StepData {
                             mode1,
                             mode2,
                             ..Default::default()
@@ -979,28 +947,6 @@ impl SubeventResultEvent {
         }
 
         Ok(())
-    }
-
-    /// Select the Mode 1 role-specific payload kind for this event origin.
-    fn mode_1_selector(&self, has_packet_phase_correction_terms: bool) -> ModeRoleSpecificInfoKind {
-        match (self.origin, has_packet_phase_correction_terms) {
-            (Origin::Initiator, false) => ModeRoleSpecificInfoKind::Mode1Initiator,
-            (Origin::Initiator, true) => ModeRoleSpecificInfoKind::Mode1InitiatorPbrRtt,
-            (Origin::Reflector, false) => ModeRoleSpecificInfoKind::Mode1Reflector,
-            (Origin::Reflector, true) => ModeRoleSpecificInfoKind::Mode1ReflectorPbrRtt,
-            (Origin::Unknown, false) | (Origin::Unknown, true) => unreachable!(),
-        }
-    }
-
-    /// Select the Mode 3 role-specific payload kind for this event origin.
-    fn mode_3_selector(&self, has_packet_phase_correction_terms: bool) -> ModeRoleSpecificInfoKind {
-        match (self.origin, has_packet_phase_correction_terms) {
-            (Origin::Initiator, false) => ModeRoleSpecificInfoKind::Mode3Initiator,
-            (Origin::Initiator, true) => ModeRoleSpecificInfoKind::Mode3InitiatorPbrRtt,
-            (Origin::Reflector, false) => ModeRoleSpecificInfoKind::Mode3Reflector,
-            (Origin::Reflector, true) => ModeRoleSpecificInfoKind::Mode3ReflectorPbrRtt,
-            (Origin::Unknown, false) | (Origin::Unknown, true) => unreachable!(),
-        }
     }
 
     /// Parse a subevent result or continuation message with the supplied origin.
@@ -1147,10 +1093,8 @@ impl TryFrom<&[u8]> for SubeventResultEvent {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        ModeRoleSpecificInfoKind, Origin, PhaseCorrectionTerm, RoundTripTimeRoleTimingKind, SubeventResultEvent,
-    };
-    use crate::event::hci_le_cs::constants::{le_subevent_code, step_mode};
+    use super::{Origin, PhaseCorrectionTerm, RoundTripTimeRoleTimingKind, StepMode, SubeventResultEvent};
+    use crate::event::hci_le_cs::constants::le_subevent_code;
     use crate::event::{ExtensionSlot, ParseError, ToneQualityIndicator};
 
     fn continue_event(step_mode: u8, channel: u8, antenna_path_count: u8, step_data: &[u8]) -> Vec<u8> {
@@ -1209,10 +1153,10 @@ mod tests {
         let event = SubeventResultEvent::try_from(message.as_slice()).unwrap();
 
         assert_eq!(event.step_count, 1);
-        assert!(matches!(event.steps[0].info.kind, ModeRoleSpecificInfoKind::Mode2));
-        assert_eq!(event.steps[1].mode, 0);
+        assert!(event.steps[0].has_data());
+        assert_eq!(event.steps[1].mode, StepMode::from(0));
 
-        let mode2 = event.steps[0].info.mode2;
+        let mode2 = event.steps[0].data.mode2;
         assert_eq!(mode2.antenna_permutation_index, 9);
         let expected_pct0 = PhaseCorrectionTerm::try_from([0x48, 0x7B, 0x54].as_slice()).unwrap();
         let expected_pct1 = PhaseCorrectionTerm::try_from([0x00, 0x00, 0x00].as_slice()).unwrap();
@@ -1233,13 +1177,10 @@ mod tests {
         let event = SubeventResultEvent::try_from_with_origin(message.as_slice(), Origin::Initiator).unwrap();
 
         assert_eq!(event.step_count, 1);
-        assert!(matches!(
-            event.steps[0].info.kind,
-            ModeRoleSpecificInfoKind::Mode1Initiator
-        ));
-        assert_eq!(event.steps[1].mode, 0);
+        assert!(event.steps[0].has_data());
+        assert_eq!(event.steps[1].mode, StepMode::from(0));
 
-        let mode1 = event.steps[0].info.mode1;
+        let mode1 = event.steps[0].data.mode1;
         assert_eq!(mode1.packet.packet_quality.access_address_check_result, 1);
         assert_eq!(mode1.packet.packet_quality.payload_bit_error_count, 2);
         assert_eq!(mode1.packet.packet_normalized_attack_detector_metric, 0x80);
@@ -1259,7 +1200,7 @@ mod tests {
         let message = continue_event(0x01, 0x05, 0x01, &mode1_basic_step_data(0x21, 0x00, 0x80));
 
         let event = SubeventResultEvent::try_from_with_origin(message.as_slice(), Origin::Initiator).unwrap();
-        let timing = event.steps[0].info.mode1.timing;
+        let timing = event.steps[0].data.mode1.timing;
 
         assert!(matches!(
             timing.kind,
@@ -1284,12 +1225,9 @@ mod tests {
         let event = SubeventResultEvent::try_from_with_origin(message.as_slice(), Origin::Reflector).unwrap();
 
         assert!(matches!(event.origin, Origin::Reflector));
+        assert!(event.steps[0].has_data());
         assert!(matches!(
-            event.steps[0].info.kind,
-            ModeRoleSpecificInfoKind::Mode1Reflector
-        ));
-        assert!(matches!(
-            event.steps[0].info.mode1.timing.kind,
+            event.steps[0].data.mode1.timing.kind,
             RoundTripTimeRoleTimingKind::TimeOfDepartureTimeOfArrivalReflector
         ));
     }
@@ -1305,14 +1243,11 @@ mod tests {
         let event = SubeventResultEvent::try_from_with_origin(message.as_slice(), Origin::Initiator).unwrap();
 
         assert_eq!(event.step_count, 1);
-        assert!(matches!(
-            event.steps[0].info.kind,
-            ModeRoleSpecificInfoKind::Mode3Initiator
-        ));
-        assert_eq!(event.steps[1].mode, 0);
+        assert!(event.steps[0].has_data());
+        assert_eq!(event.steps[1].mode, StepMode::from(0));
 
-        let mode1 = event.steps[0].info.mode1;
-        let mode2 = event.steps[0].info.mode2;
+        let mode1 = event.steps[0].data.mode1;
+        let mode2 = event.steps[0].data.mode2;
         assert_eq!(mode1.packet.packet_quality.access_address_check_result, 1);
         assert_eq!(mode1.packet.packet_quality.payload_bit_error_count, 2);
         assert_eq!(mode1.packet.packet_antenna, 0x02);
@@ -1336,13 +1271,10 @@ mod tests {
         let event = SubeventResultEvent::try_from(message.as_slice()).unwrap();
 
         assert_eq!(event.step_count, 1);
-        assert!(matches!(
-            event.steps[0].info.kind,
-            ModeRoleSpecificInfoKind::Mode0Reflector
-        ));
-        assert_eq!(event.steps[1].mode, 0);
+        assert!(event.steps[0].has_data());
+        assert_eq!(event.steps[1].mode, StepMode::from(0));
 
-        let mode0 = event.steps[0].info.mode0;
+        let mode0 = event.steps[0].data.mode0;
         assert_eq!(mode0.packet_quality.access_address_check_result, 0x02);
         assert_eq!(mode0.packet_quality.payload_bit_error_count, 0x0A);
         assert_eq!(mode0.packet_received_signal_strength_indicator, 0x34_i8);
@@ -1358,12 +1290,9 @@ mod tests {
 
         let event = SubeventResultEvent::try_from(message.as_slice()).unwrap();
 
-        assert!(matches!(
-            event.steps[0].info.kind,
-            ModeRoleSpecificInfoKind::Mode0Initiator
-        ));
+        assert!(event.steps[0].has_data());
 
-        let mode0 = event.steps[0].info.mode0;
+        let mode0 = event.steps[0].data.mode0;
         assert_eq!(mode0.measured_freq_offset, 150);
         assert_eq!(mode0.to_ppm(), Some(1.5));
     }
@@ -1376,7 +1305,7 @@ mod tests {
 
         let event = SubeventResultEvent::try_from(message.as_slice()).unwrap();
 
-        let mode0 = event.steps[0].info.mode0;
+        let mode0 = event.steps[0].data.mode0;
         assert_eq!(mode0.measured_freq_offset, 0x58F0);
         assert_eq!(mode0.to_ppm(), Some(-100.0));
     }
@@ -1388,7 +1317,7 @@ mod tests {
 
         let event = SubeventResultEvent::try_from(message.as_slice()).unwrap();
 
-        let mode0 = event.steps[0].info.mode0;
+        let mode0 = event.steps[0].data.mode0;
         assert_eq!(mode0.measured_freq_offset, 0xC000);
         assert_eq!(mode0.to_ppm(), None);
     }
@@ -1402,10 +1331,7 @@ mod tests {
         let event = SubeventResultEvent::try_from(message.as_slice()).unwrap();
 
         assert!(matches!(event.origin, Origin::Unknown));
-        assert!(matches!(
-            event.steps[0].info.kind,
-            ModeRoleSpecificInfoKind::Mode0Initiator
-        ));
+        assert!(event.steps[0].has_data());
     }
 
     #[test]
@@ -1424,7 +1350,7 @@ mod tests {
         let message = continue_event(0x01, 0x05, 0x01, &mode1_basic_step_data(0xA2, 0x12, 0x34));
 
         let event = SubeventResultEvent::try_from_with_origin(message.as_slice(), Origin::Initiator).unwrap();
-        let mode1 = event.steps[0].info.mode1;
+        let mode1 = event.steps[0].data.mode1;
 
         assert_eq!(mode1.packet.packet_quality.access_address_check_result, 0x02);
         assert_eq!(mode1.packet.packet_quality.payload_bit_error_count, 0x0A);
@@ -1444,12 +1370,9 @@ mod tests {
         let message = continue_event(0x01, 0x05, 0x01, &mode1_pbr_rtt_step_data(0x21, 0x12, 0x34));
 
         let event = SubeventResultEvent::try_from_with_origin(message.as_slice(), Origin::Initiator).unwrap();
-        let mode1 = event.steps[0].info.mode1;
+        let mode1 = event.steps[0].data.mode1;
 
-        assert!(matches!(
-            event.steps[0].info.kind,
-            ModeRoleSpecificInfoKind::Mode1InitiatorPbrRtt
-        ));
+        assert!(event.steps[0].has_data());
         assert!(mode1.has_packet_phase_correction_terms);
         let expected_pct = PhaseCorrectionTerm::try_from([0x48, 0x7B, 0x54].as_slice()).unwrap();
         assert_eq!(
@@ -1468,12 +1391,9 @@ mod tests {
 
         let event = SubeventResultEvent::try_from_with_origin(message.as_slice(), Origin::Reflector).unwrap();
 
+        assert!(event.steps[0].has_data());
         assert!(matches!(
-            event.steps[0].info.kind,
-            ModeRoleSpecificInfoKind::Mode1ReflectorPbrRtt
-        ));
-        assert!(matches!(
-            event.steps[0].info.mode1.timing.kind,
+            event.steps[0].data.mode1.timing.kind,
             RoundTripTimeRoleTimingKind::TimeOfDepartureTimeOfArrivalReflector
         ));
     }
@@ -1488,12 +1408,9 @@ mod tests {
 
         let event = SubeventResultEvent::try_from_with_origin(message.as_slice(), Origin::Reflector).unwrap();
 
+        assert!(event.steps[0].has_data());
         assert!(matches!(
-            event.steps[0].info.kind,
-            ModeRoleSpecificInfoKind::Mode3Reflector
-        ));
-        assert!(matches!(
-            event.steps[0].info.mode1.timing.kind,
+            event.steps[0].data.mode1.timing.kind,
             RoundTripTimeRoleTimingKind::TimeOfDepartureTimeOfArrivalReflector
         ));
     }
@@ -1507,12 +1424,9 @@ mod tests {
         let message = continue_event(0x03, 0x05, 0x01, &step_data);
 
         let event = SubeventResultEvent::try_from_with_origin(message.as_slice(), Origin::Initiator).unwrap();
-        let mode1 = event.steps[0].info.mode1;
+        let mode1 = event.steps[0].data.mode1;
 
-        assert!(matches!(
-            event.steps[0].info.kind,
-            ModeRoleSpecificInfoKind::Mode3InitiatorPbrRtt
-        ));
+        assert!(event.steps[0].has_data());
         assert!(mode1.has_packet_phase_correction_terms);
     }
 
@@ -1526,12 +1440,9 @@ mod tests {
 
         let event = SubeventResultEvent::try_from_with_origin(message.as_slice(), Origin::Reflector).unwrap();
 
+        assert!(event.steps[0].has_data());
         assert!(matches!(
-            event.steps[0].info.kind,
-            ModeRoleSpecificInfoKind::Mode3ReflectorPbrRtt
-        ));
-        assert!(matches!(
-            event.steps[0].info.mode1.timing.kind,
+            event.steps[0].data.mode1.timing.kind,
             RoundTripTimeRoleTimingKind::TimeOfDepartureTimeOfArrivalReflector
         ));
     }
@@ -1597,12 +1508,11 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_mode_slots_preserve_the_sentinel() {
-        // A 0xFF slot followed by a real Mode 2 step: the sentinel is
-        // preserved with its own payload kind, so the step window maps 1:1 to
-        // the reported slots and no step fabricates mode data.
+    fn reserved_mode_without_payload_preserves_the_slot() {
+        // A reserved slot without payload followed by a real Mode 2 step:
+        // preserve both slots without fabricating measurement data.
         let mut message = vec![0x32u8, 0x01, 0x00, 0x07, 0x00, 0x00, 0x00, 0x01, 0x02];
-        message.extend_from_slice(&[0xFF, 0x05, 0x03, 0xAA, 0xBB, 0xCC]);
+        message.extend_from_slice(&[0xFF, 0x05, 0x00]);
         message.extend_from_slice(&[0x02, 0x05, mode2_step_data().len() as u8]);
         message.extend_from_slice(&mode2_step_data());
 
@@ -1610,17 +1520,15 @@ mod tests {
 
         assert_eq!(event.step_count, 2);
         let sentinel = &event.steps[0];
-        assert_eq!(sentinel.mode, step_mode::MODE_INVALID);
+        assert_eq!(sentinel.mode, StepMode::Reserved);
         assert_eq!(sentinel.channel, 0x05);
-        assert_eq!(sentinel.info.kind, ModeRoleSpecificInfoKind::Invalid);
-        assert_eq!(sentinel.info.kind.mode(), sentinel.mode);
+        assert!(!sentinel.has_data());
         let mode2 = &event.steps[1];
-        assert_eq!(mode2.mode, step_mode::MODE_2);
-        assert_eq!(mode2.info.kind, ModeRoleSpecificInfoKind::Mode2);
-        assert_eq!(mode2.info.mode2.antenna_permutation_index, 9);
+        assert_eq!(mode2.mode, StepMode::Mode2);
+        assert!(mode2.has_data());
+        assert_eq!(mode2.data.mode2.antenna_permutation_index, 9);
 
-        // The sentinel round-trips through the persisted representation, so
-        // the new kind's wire value is pinned.
+        // Reserved mode and payload absence round-trip independently.
         #[cfg(all(feature = "std", feature = "alloc", feature = "libc"))]
         {
             let bytes = crate::event::hci_le_cs::persisted_frame::encode(&event).expect("sentinel event encodes");
@@ -1629,7 +1537,43 @@ mod tests {
                 &bytes,
             )
             .expect("sentinel event decodes");
-            assert_eq!(decoded.steps[0].info.kind, ModeRoleSpecificInfoKind::Invalid);
+            assert!(!decoded.steps[0].has_data());
+        }
+    }
+
+    #[test]
+    fn step_mode_uses_variant_indices_and_normalizes_reserved_hci_values() {
+        for raw in [0_u8, 1, 2, 3, 4, 254, 255] {
+            let mode = StepMode::from(raw);
+            let expected = if raw <= 3 { raw } else { 255 };
+            assert_eq!(u8::from(mode), expected);
+            let mut buffer = [0_u8; 2];
+            let tag = if raw <= 3 { raw } else { 4 };
+            assert_eq!(postcard::to_slice(&mode, &mut buffer).unwrap(), &[tag]);
+            assert_eq!(postcard::from_bytes::<StepMode>(&[tag]).unwrap(), mode);
+        }
+        for tag in [5_u8, 254, 255] {
+            assert!(postcard::from_bytes::<StepMode>(&[tag]).is_err());
+        }
+        assert_eq!(core::mem::size_of::<StepMode>(), 1);
+    }
+
+    #[test]
+    fn absent_payload_keeps_each_known_mode_through_serialization() {
+        for raw in 0..=3 {
+            let message = continue_event(raw, 12, 1, &[]);
+            let event = SubeventResultEvent::try_from_with_origin(&message, Origin::Initiator).unwrap();
+            let step = &event.steps[0];
+            assert_eq!(step.mode, StepMode::from(raw));
+            assert_eq!(step.channel, 12);
+            assert!(!step.has_data());
+            event.validate_invariants().unwrap();
+            let mut buffer = [0_u8; 1024];
+            let bytes = postcard::to_slice(&event, &mut buffer).unwrap();
+            let decoded: SubeventResultEvent = postcard::from_bytes(bytes).unwrap();
+            decoded.validate_invariants().unwrap();
+            assert_eq!(decoded.steps[0].mode, step.mode);
+            assert!(!decoded.steps[0].has_data());
         }
     }
 
@@ -1637,7 +1581,7 @@ mod tests {
     fn test_zero_length_aborted_steps_preserve_the_subevent() {
         // A controller aborts a step by reporting it with Step_Data_Length 0
         // (Core Spec Vol 4, Part E §7.7.65.44/45); the slot is preserved as a
-        // sentinel and the subevent's real steps still parse.
+        // step without payload and the subevent's real steps still parse.
         let mut message = vec![0x32u8, 0x01, 0x00, 0x07, 0x00, 0x00, 0x00, 0x01, 0x02];
         message.extend_from_slice(&[0x01, 0x05, 0x00]);
         message.extend_from_slice(&[0x02, 0x05, mode2_step_data().len() as u8]);
@@ -1646,10 +1590,12 @@ mod tests {
         let event = SubeventResultEvent::try_from_with_origin(message.as_slice(), Origin::Unknown).unwrap();
 
         assert_eq!(event.step_count, 2);
-        assert_eq!(event.steps[0].mode, step_mode::MODE_INVALID);
-        assert_eq!(event.steps[0].info.kind, ModeRoleSpecificInfoKind::Invalid);
-        assert_eq!(event.steps[1].mode, step_mode::MODE_2);
-        assert_eq!(event.steps[1].info.mode2.antenna_permutation_index, 9);
+        assert_eq!(event.steps[0].mode, StepMode::Mode1);
+        assert!(!event.steps[0].has_data());
+        event.validate_invariants().unwrap();
+        assert!(!event.steps[0].has_data());
+        assert_eq!(event.steps[1].mode, StepMode::Mode2);
+        assert_eq!(event.steps[1].data.mode2.antenna_permutation_index, 9);
     }
 
     #[test]
@@ -1745,8 +1691,9 @@ mod compact_wire_tests {
         let mut event = SubeventResultEvent::try_from_with_origin(&message, Origin::Initiator).unwrap();
         event.step_count = count;
         for (index, step) in event.steps.iter_mut().enumerate().take(count) {
-            step.mode = 2;
+            step.mode = StepMode::Mode2;
             step.channel = index as u8;
+            step.has_data = true;
         }
         event
     }
@@ -1778,46 +1725,43 @@ mod compact_wire_tests {
 
     #[test]
     fn mixed_modes_keep_only_selected_payloads() {
-        use ModeRoleSpecificInfoKind::*;
-        let kinds = [
-            Mode0Initiator,
-            Mode0Reflector,
-            Mode1Initiator,
-            Mode1InitiatorPbrRtt,
-            Mode1Reflector,
-            Mode1ReflectorPbrRtt,
-            Mode2,
-            Mode3Initiator,
-            Mode3InitiatorPbrRtt,
-            Mode3Reflector,
-            Mode3ReflectorPbrRtt,
-            Invalid,
-        ];
-        let mut original = event(kinds.len());
-        for (index, kind) in kinds.into_iter().enumerate() {
-            let info = &mut original.steps[index].info;
-            info.kind = kind;
+        let modes = [StepMode::Mode0, StepMode::Mode1, StepMode::Mode2, StepMode::Mode3];
+        let mut original = event(modes.len());
+        for (index, mode) in modes.into_iter().enumerate() {
+            original.steps[index].mode = mode;
+            original.steps[index].has_data = true;
+            let info = &mut original.steps[index].data;
             info.mode0.measured_freq_offset = 1234;
             info.mode1.timing.role_specific_timing_value = -123;
             info.mode2.phase_correction_terms[0].i = 12.5;
-            original.steps[index].mode = kind.mode();
         }
         let bytes = postcard::to_allocvec(&original).unwrap();
         let decoded: SubeventResultEvent = postcard::from_bytes(&bytes).unwrap();
         decoded.validate_invariants().unwrap();
-        for index in 0..kinds.len() {
+        for index in 0..modes.len() {
             let a = &original.steps[index];
             let b = &decoded.steps[index];
             assert_eq!(a.mode, b.mode);
-            assert_eq!(a.info.kind, b.info.kind);
-            assert_eq!(b.info.mode0.measured_freq_offset, if a.mode == 0 { 1234 } else { 0 });
+            assert_eq!(a.has_data, b.has_data);
             assert_eq!(
-                b.info.mode1.timing.role_specific_timing_value,
-                if a.mode == 1 || a.mode == 3 { -123 } else { 0 }
+                b.data.mode0.measured_freq_offset,
+                if u8::from(a.mode) == 0 { 1234 } else { 0 }
             );
             assert_eq!(
-                b.info.mode2.phase_correction_terms[0].i,
-                if a.mode == 2 || a.mode == 3 { 12.5 } else { 0.0 }
+                b.data.mode1.timing.role_specific_timing_value,
+                if u8::from(a.mode) == 1 || u8::from(a.mode) == 3 {
+                    -123
+                } else {
+                    0
+                }
+            );
+            assert_eq!(
+                b.data.mode2.phase_correction_terms[0].i,
+                if u8::from(a.mode) == 2 || u8::from(a.mode) == 3 {
+                    12.5
+                } else {
+                    0.0
+                }
             );
         }
         assert_eq!(postcard::to_allocvec(&decoded).unwrap(), bytes);
@@ -1827,7 +1771,7 @@ mod compact_wire_tests {
     fn compact_decoder_rejects_bad_version_counts_and_truncation() {
         let bytes = postcard::to_allocvec(&event(1)).unwrap();
         let mut wrong_version = bytes.clone();
-        for version in [1, 3] {
+        for version in [1, 2, 4] {
             wrong_version[0] = version;
             assert!(postcard::from_bytes::<SubeventResultEvent>(&wrong_version).is_err());
         }

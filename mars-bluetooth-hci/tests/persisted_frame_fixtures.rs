@@ -14,7 +14,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use mars_bluetooth_hci::event::hci_le_cs::persisted_frame::{
-    CS_SUBEVENT_FRAME_FORMAT, FrameDescriptor, current_frame_descriptor, decode, encode,
+    CS_SUBEVENT_FRAME_FORMAT, FrameCodecError, FrameDescriptor, current_frame_descriptor, decode, encode,
 };
 use mars_bluetooth_hci::event::hci_le_cs::subevent_result::SubeventResultEvent;
 
@@ -81,7 +81,7 @@ fn fixture_mode(path: &Path) -> u8 {
     mode
 }
 
-/// Discovers the bounded set of retained current and migration-source fixtures.
+/// Discovers the retained current and previous-version fixtures.
 ///
 /// The directory convention is deliberately validated here: a malformed or
 /// incomplete fixture set must fail CI rather than silently lose coverage.
@@ -199,9 +199,16 @@ fn decode_fixture(fixture: &Fixture) -> (Vec<u8>, SubeventResultEvent) {
 }
 
 #[test]
-/// Ensures every retained fixture remains readable through its declared codec.
+/// Ensures every current fixture decodes with its declared descriptor.
 fn every_fixture_decodes_with_its_declared_descriptor() {
     for fixture in fixtures() {
+        if fixture.descriptor != current_frame_descriptor() {
+            assert!(matches!(
+                decode(fixture.descriptor, &fixture_bytes(&fixture)),
+                Err(FrameCodecError::UnsupportedVersion { version }) if version == fixture.descriptor.version()
+            ));
+            continue;
+        }
         let (_, event) = decode_fixture(&fixture);
 
         match fixture.expected_step_mode {
@@ -214,17 +221,12 @@ fn every_fixture_decodes_with_its_declared_descriptor() {
                     fixture.path.display()
                 );
                 assert_eq!(
-                    event.steps[0].mode,
+                    u8::from(event.steps[0].mode),
                     mode,
                     "{} fixture has its expected step mode",
                     fixture.path.display()
                 );
-                assert_eq!(
-                    event.steps[0].info.kind.mode(),
-                    mode,
-                    "{} fixture's first step carries its mode's payload kind",
-                    fixture.path.display()
-                );
+                assert!(event.steps[0].has_data());
             }
             None => {
                 // The config-complete fixture pins the initial-metadata half
@@ -246,12 +248,11 @@ fn every_fixture_decodes_with_its_declared_descriptor() {
 }
 
 #[test]
-/// Locks current encoder output without requiring old migration fixtures to re-encode.
+/// Locks current encoder output against the fixtures.
 fn current_encoder_matches_current_descriptor_fixtures() {
-    let current_descriptor = current_frame_descriptor();
     let current_fixtures: Vec<_> = fixtures()
         .into_iter()
-        .filter(|fixture| fixture.descriptor == current_descriptor)
+        .filter(|fixture| fixture.descriptor == current_frame_descriptor())
         .collect();
 
     assert_eq!(
@@ -287,7 +288,7 @@ mod fixture_layout_tests {
         fs::write(directory.join(CONFIG_COMPLETE_FIXTURE_FILE), "00\n").expect("config-complete fixture is written");
     }
 
-    /// Uses the real current descriptor while constructing an invalid source version.
+    /// Returns the current codec version for fixture-layout tests.
     fn current_version() -> u16 {
         current_frame_descriptor().version()
     }
@@ -346,6 +347,9 @@ fn historical_v1_frames_are_explicitly_unsupported() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/legacy-persisted-frames/v1");
     for entry in fs::read_dir(root).unwrap() {
         let bytes = hex::decode(fs::read_to_string(entry.unwrap().path()).unwrap().trim()).unwrap();
-        assert!(decode(FrameDescriptor::new(CS_SUBEVENT_FRAME_FORMAT, 1), &bytes).is_err());
+        assert!(matches!(
+            decode(FrameDescriptor::new(CS_SUBEVENT_FRAME_FORMAT, 1), &bytes),
+            Err(FrameCodecError::UnsupportedVersion { version: 1 })
+        ));
     }
 }
