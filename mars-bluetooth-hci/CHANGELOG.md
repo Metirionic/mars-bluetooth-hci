@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com), and this project adheres to [Semantic Versioning](https://semver.org).
 
 - - -
+## [mars-bluetooth-hci@0.16.0](https://github.com/Metirionic/mars-bluetooth-hci/compare/310aa4003b32b228119da917ed33e9ed1fc4c95f..mars-bluetooth-hci@0.16.0) - 2026-11-24
+#### Features
+- simplify step mode handling - ([0a23b7b](https://github.com/Metirionic/mars-bluetooth-hci/commit/0a23b7b6ae9f31c92deb311c30f02f422756d25b)) - Tim Taubert
+#### Documentation
+- update documentation - ([310aa40](https://github.com/Metirionic/mars-bluetooth-hci/commit/310aa4003b32b228119da917ed33e9ed1fc4c95f)) - Tim Taubert
+
+- - -
+
 ## [mars-bluetooth-hci@0.15.0](https://github.com/Metirionic/mars-bluetooth-hci/compare/d72140ff99dd696d9605a8c5c26767484b06f543..mars-bluetooth-hci@0.15.0) - 2026-11-16
 #### Features
 - serialization just sends used tone data fields - ([c576c1e](https://github.com/Metirionic/mars-bluetooth-hci/commit/c576c1e072f724f1f87c4ffa9a5d67b84bb4a744)) - Tim Taubert
